@@ -1,0 +1,43 @@
+{
+  "id": "scratch",
+  "name": "Scratch",
+  "abbrev": "SCR",
+  "version": "0.2.1",
+  "author": "mestela",
+  "description": "Scratch a digital sample with Serato control vinyl and a USB MIDI fader",
+  "dsp": "dsp.so",
+  "api_version": 2,
+  "component_type": "sound_generator",
+  "license": "GPL-3.0-or-later",
+  "capabilities": {
+    "audio_in": true,
+    "audio_out": true,
+    "midi_in": true,
+    "chainable": true,
+    "requires_continuous_processing": true,
+    "component_type": "sound_generator",
+    "chain_params": [
+      {"key":"sample_file", "name":"Sample", "type":"filepath", "root":"/data/UserData/UserLibrary/Samples", "start_path":"/data/UserData/UserLibrary/Samples", "filter":".wav", "default":""},
+      {"key":"mode", "name":"Tracking", "type":"enum", "options":["Relative","Absolute"], "default":0},
+      {"key":"fader_cc", "name":"Fader CC", "type":"int", "min":0, "max":127, "step":1, "default":1},
+      {"key":"fader_channel", "name":"MIDI Ch", "type":"int", "min":0, "max":16, "step":1, "default":16},
+      {"key":"midi_learn", "name":"Learn CC", "type":"enum", "options":["Off","Armed"], "default":0},
+      {"key":"hamster", "name":"Hamster", "type":"enum", "options":["Off","On"], "default":0},
+      {"key":"cut_in", "name":"Cut In", "type":"float", "min":0, "max":0.95, "step":0.01, "default":0.03},
+      {"key":"curve", "name":"Curve", "type":"float", "min":0.1, "max":4, "step":0.1, "default":1},
+      {"key":"dvs_status", "name":"DVS Status", "type":"string", "access":"read"},
+      {"key":"monitor", "name":"DVS Monitor", "type":"canvas", "canvas_script":"monitor.js", "as_page":true, "show_value":false, "extra_keys":["dvs_status"]},
+      {"key":"scratch_view_status", "name":"Scratch View Status", "type":"string", "access":"read", "live":true},
+      {"key":"scratch_view", "name":"Scratch View", "type":"canvas", "canvas_script":"scratch_view.js", "as_page":true, "show_value":false, "extra_keys":["scratch_view_status"]}
+    ],
+    "ui_hierarchy": {
+      "levels": {
+        "root": {
+          "label": "Scratch",
+          "params": ["sample_file", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve", "monitor", "scratch_view"],
+          "knobs": ["sample_file", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve"]
+        }
+      }
+    }
+  }
+}
