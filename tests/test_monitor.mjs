@@ -11,7 +11,7 @@ const ctx = {
 
 globalThis.canvas_overlay.drawPage(ctx, {
     values: {
-        dvs_status: "0.5,0.4,-1.02,12.345,0.92,1,0.7,abcde,14,127,1,1,60,2,0123456789abcdef0123456789abcdef",
+        dvs_status: "0.5,0.4,-1.02,12.345,0.92,1,0.7,abcde,14,127,1,1,60,2,0123456789abcdef0123456789abcdef,1,2646000,3.25,1",
     },
 });
 

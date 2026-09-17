@@ -34,11 +34,13 @@ typedef struct scratch_instance {
     atomic_size_t published_frames;
     _Atomic(unsigned char *) published_waveform;
     atomic_size_t published_waveform_bins;
+    _Atomic(unsigned char *) published_overview;
     atomic_uint published_generation;
     atomic_uint adopted_generation;
     unsigned int local_generation;
     const unsigned char *waveform;
     size_t waveform_bins;
+    const unsigned char *overview;
     int absolute_mode;
     int fader_cc;
     int fader_channel; /* 0-15, or 16 for omni */
@@ -50,6 +52,9 @@ typedef struct scratch_instance {
     int last_note_source;
     float cut_in;
     float curve;
+    float low_cut_hz;
+    float retrigger_ms;
+    int wave_zoom;
     float fader_raw;
     uint32_t held_notes[4];
     int pad_gate_active;
@@ -75,6 +80,72 @@ static uint32_t read_u32_le(const unsigned char *p)
 {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static int json_get_number(const char *json, const char *key, double *out)
+{
+    char search[64];
+    const char *value;
+    char *end = NULL;
+    snprintf(search, sizeof(search), "\"%s\":", key);
+    value = strstr(json, search);
+    if (!value) return 0;
+    value += strlen(search);
+    while (*value == ' ' || *value == '\t') value++;
+    *out = strtod(value, &end);
+    return end != value;
+}
+
+static int json_get_string(const char *json, const char *key,
+                           char *out, size_t out_len)
+{
+    char search[64];
+    const char *p;
+    size_t n = 0;
+    snprintf(search, sizeof(search), "\"%s\":", key);
+    p = strstr(json, search);
+    if (!p || out_len == 0) return 0;
+    p += strlen(search);
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p++ != '"') return 0;
+    while (*p && *p != '"') {
+        char c = *p++;
+        if (c == '\\' && *p) {
+            c = *p++;
+            if (c == 'n') c = '\n';
+            else if (c == 'r') c = '\r';
+            else if (c == 't') c = '\t';
+        }
+        if (n + 1 >= out_len) return 0;
+        out[n++] = c;
+    }
+    if (*p != '"') return 0;
+    out[n] = '\0';
+    return 1;
+}
+
+static int json_escape(const char *src, char *out, size_t out_len)
+{
+    size_t n = 0;
+    while (*src) {
+        const char *escaped = NULL;
+        char c = *src++;
+        if (c == '"') escaped = "\\\"";
+        else if (c == '\\') escaped = "\\\\";
+        else if (c == '\n') escaped = "\\n";
+        else if (c == '\r') escaped = "\\r";
+        else if (c == '\t') escaped = "\\t";
+        if (escaped) {
+            if (n + 2 >= out_len) return 0;
+            out[n++] = escaped[0];
+            out[n++] = escaped[1];
+        } else {
+            if ((unsigned char)c < 0x20 || n + 1 >= out_len) return 0;
+            out[n++] = c;
+        }
+    }
+    out[n] = '\0';
+    return 1;
 }
 
 static int load_pcm16_stereo_wav(const char *path, int16_t **pcm, size_t *frames)
@@ -167,6 +238,28 @@ static unsigned char *build_waveform(const int16_t *pcm, size_t frames,
     return waveform;
 }
 
+static unsigned char *build_overview(const unsigned char *waveform, size_t bins)
+{
+    unsigned char *overview = calloc(128, 1);
+    int x;
+    if (!overview)
+        return NULL;
+    for (x = 0; x < 128; ++x) {
+        size_t first = (size_t)x * bins / 128;
+        size_t last = (size_t)(x + 1) * bins / 128;
+        unsigned char peak = 0;
+        size_t bin;
+        if (last <= first && first < bins)
+            last = first + 1;
+        for (bin = first; bin < last && bin < bins; ++bin) {
+            if (waveform[bin] > peak)
+                peak = waveform[bin];
+        }
+        overview[x] = peak;
+    }
+    return overview;
+}
+
 static void demote_loader_thread(void)
 {
 #ifdef __linux__
@@ -188,6 +281,7 @@ static void *loader_main(void *opaque)
     unsigned int handled_sequence = 0;
     int16_t *current_sample = NULL;
     unsigned char *current_waveform = NULL;
+    unsigned char *current_overview = NULL;
 
     demote_loader_thread();
     definition = timecoder_find_definition("serato_2a");
@@ -223,6 +317,7 @@ static void *loader_main(void *opaque)
         int16_t *next_sample = NULL;
         size_t next_frames = 0;
         unsigned char *next_waveform = NULL;
+        unsigned char *next_overview = NULL;
         size_t next_waveform_bins = 0;
         atomic_store_explicit(&instance->loader_state, 0, memory_order_release);
         if (load_pcm16_stereo_wav(path, &next_sample, &next_frames) != 0) {
@@ -232,6 +327,8 @@ static void *loader_main(void *opaque)
         }
         next_waveform = build_waveform(next_sample, next_frames,
                                        &next_waveform_bins);
+        if (next_waveform)
+            next_overview = build_overview(next_waveform, next_waveform_bins);
 
         atomic_store_explicit(&instance->published_sample, next_sample,
                               memory_order_relaxed);
@@ -241,6 +338,8 @@ static void *loader_main(void *opaque)
                               memory_order_relaxed);
         atomic_store_explicit(&instance->published_waveform_bins,
                               next_waveform_bins, memory_order_relaxed);
+        atomic_store_explicit(&instance->published_overview, next_overview,
+                              memory_order_relaxed);
         unsigned int generation = atomic_fetch_add_explicit(
             &instance->published_generation, 1, memory_order_release) + 1;
         atomic_store_explicit(&instance->loader_state, 1, memory_order_release);
@@ -251,11 +350,14 @@ static void *loader_main(void *opaque)
             usleep(1000);
         free(current_sample);
         free(current_waveform);
+        free(current_overview);
         current_sample = next_sample;
         current_waveform = next_waveform;
+        current_overview = next_overview;
     }
     free(current_sample);
     free(current_waveform);
+    free(current_overview);
     return NULL;
 }
 
@@ -287,7 +389,6 @@ static void apply_gate(scratch_instance_t *instance)
 static void *scratch_create(const char *module_dir, const char *json_defaults)
 {
     scratch_instance_t *instance = calloc(1, sizeof(*instance));
-    (void)module_dir;
     (void)json_defaults;
     if (!instance)
         return NULL;
@@ -297,8 +398,15 @@ static void *scratch_create(const char *module_dir, const char *json_defaults)
     instance->fader_channel = 16;
     instance->cut_in = 0.03f;
     instance->curve = 1.0f;
+    instance->low_cut_hz = 100.0f;
+    instance->retrigger_ms = 8.7f;
+    instance->wave_zoom = 1;
     instance->fader_raw = 1.0f;
     instance->pad_gate_active = 1;
+    if (module_dir && module_dir[0])
+        snprintf(instance->requested_path, sizeof(instance->requested_path),
+                 "%s/samples/ahh-fresh.wav", module_dir);
+    scratch_engine_set_low_cut(&instance->engine, instance->low_cut_hz);
     apply_gate(instance);
 
     if (pthread_create(&instance->loader_thread, NULL, loader_main, instance) != 0) {
@@ -336,10 +444,13 @@ static void scratch_on_midi(void *opaque, const uint8_t *msg, int len, int sourc
         uint32_t bit = 1u << (msg[1] & 31);
         instance->last_note = msg[1];
         instance->last_note_source = source;
-        if (status == 0x90 && msg[2] != 0)
+        if (status == 0x90 && msg[2] != 0) {
             instance->held_notes[word] |= bit;
-        else
+            scratch_engine_retrigger(&instance->engine,
+                (unsigned int)lrintf(instance->retrigger_ms * 44.1f));
+        } else {
             instance->held_notes[word] &= ~bit;
+        }
         instance->pad_gate_active = 1;
         apply_gate(instance);
         return;
@@ -369,6 +480,24 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
     scratch_instance_t *instance = opaque;
     if (!instance || !key || !value)
         return;
+    if (strcmp(key, "state") == 0) {
+        static const char *const numeric_keys[] = {
+            "mode", "fader_cc", "fader_channel", "hamster", "cut_in",
+            "curve", "low_cut", "retrigger_ms", "wave_zoom"
+        };
+        char path[PATH_MAX];
+        size_t i;
+        if (json_get_string(value, "sample_file", path, sizeof(path)))
+            scratch_set_param(instance, "sample_file", path);
+        for (i = 0; i < sizeof(numeric_keys) / sizeof(numeric_keys[0]); ++i) {
+            double number;
+            char scalar[32];
+            if (!json_get_number(value, numeric_keys[i], &number)) continue;
+            snprintf(scalar, sizeof(scalar), "%.9g", number);
+            scratch_set_param(instance, numeric_keys[i], scalar);
+        }
+        return;
+    }
     if (strcmp(key, "mode") == 0)
         instance->absolute_mode = atoi(value) != 0;
     else if (strcmp(key, "fader_cc") == 0)
@@ -391,6 +520,14 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
         instance->cut_in = fminf(0.95f, fmaxf(0.0f, strtof(value, NULL)));
     else if (strcmp(key, "curve") == 0)
         instance->curve = fminf(4.0f, fmaxf(0.1f, strtof(value, NULL)));
+    else if (strcmp(key, "low_cut") == 0) {
+        instance->low_cut_hz = fminf(300.0f, fmaxf(0.0f, strtof(value, NULL)));
+        scratch_engine_set_low_cut(&instance->engine, instance->low_cut_hz);
+    }
+    else if (strcmp(key, "retrigger_ms") == 0)
+        instance->retrigger_ms = fminf(30.0f, fmaxf(0.0f, strtof(value, NULL)));
+    else if (strcmp(key, "wave_zoom") == 0)
+        instance->wave_zoom = atoi(value) < 0 ? 0 : (atoi(value) > 3 ? 3 : atoi(value));
     apply_gate(instance);
 }
 
@@ -421,8 +558,14 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
               "\"min\":0,\"max\":0.95,\"step\":0.01,\"default\":0.03},"
             "{\"key\":\"curve\",\"name\":\"Curve\",\"type\":\"float\","
               "\"min\":0.1,\"max\":4,\"step\":0.1,\"default\":1},"
+            "{\"key\":\"low_cut\",\"name\":\"Low Cut\",\"type\":\"float\","
+              "\"min\":0,\"max\":300,\"step\":5,\"unit\":\"Hz\",\"default\":100},"
+            "{\"key\":\"retrigger_ms\",\"name\":\"Retrigger\",\"type\":\"float\","
+              "\"min\":0,\"max\":30,\"step\":0.5,\"unit\":\"ms\",\"default\":8.7},"
+            "{\"key\":\"wave_zoom\",\"name\":\"Wave Zoom\",\"type\":\"enum\","
+              "\"options\":[\"1 sec\",\"4 sec\",\"16 sec\",\"Overview\"],\"default\":1},"
             "{\"key\":\"dvs_status\",\"name\":\"DVS Status\",\"type\":\"string\","
-              "\"access\":\"read\"},"
+              "\"access\":\"read\",\"live\":true},"
             "{\"key\":\"monitor\",\"name\":\"DVS Monitor\",\"type\":\"canvas\","
               "\"canvas_script\":\"monitor.js\",\"as_page\":true,\"show_value\":false,"
               "\"extra_keys\":[\"dvs_status\"]},"
@@ -437,9 +580,9 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
         static const char hierarchy[] =
             "{\"levels\":{\"root\":{\"label\":\"Scratch\","
             "\"params\":[\"sample_file\",\"mode\",\"fader_cc\",\"fader_channel\","
-                         "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\",\"monitor\",\"scratch_view\"],"
+                         "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\",\"low_cut\",\"retrigger_ms\",\"wave_zoom\",\"scratch_view\",\"monitor\"],"
             "\"knobs\":[\"sample_file\",\"mode\",\"fader_cc\",\"fader_channel\","
-                        "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\"]}}}";
+                        "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\",\"low_cut\",\"retrigger_ms\",\"wave_zoom\"]}}}";
         value = snprintf(out, out_len, "%s", hierarchy);
     } else if (strcmp(key, "mode") == 0)
         value = snprintf(out, out_len, "%d", instance->absolute_mode);
@@ -451,12 +594,32 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
         value = snprintf(out, out_len, "%d", instance->hamster);
     else if (strcmp(key, "midi_learn") == 0)
         value = snprintf(out, out_len, "%d", instance->midi_learn);
+    else if (strcmp(key, "low_cut") == 0)
+        value = snprintf(out, out_len, "%.1f", instance->low_cut_hz);
+    else if (strcmp(key, "retrigger_ms") == 0)
+        value = snprintf(out, out_len, "%.1f", instance->retrigger_ms);
+    else if (strcmp(key, "wave_zoom") == 0)
+        value = snprintf(out, out_len, "%d", instance->wave_zoom);
     else if (strcmp(key, "last_cc") == 0)
         value = snprintf(out, out_len, "%d", instance->last_cc);
     else if (strcmp(key, "last_value") == 0)
         value = snprintf(out, out_len, "%d", instance->last_value);
     else if (strcmp(key, "sample_file") == 0)
         value = snprintf(out, out_len, "%s", instance->requested_path);
+    else if (strcmp(key, "state") == 0) {
+        char escaped_path[PATH_MAX * 2];
+        if (!json_escape(instance->requested_path, escaped_path, sizeof(escaped_path)))
+            return -1;
+        value = snprintf(out, out_len,
+            "{\"version\":1,\"sample_file\":\"%s\",\"mode\":%d,"
+            "\"fader_cc\":%d,\"fader_channel\":%d,\"hamster\":%d,"
+            "\"cut_in\":%.4f,\"curve\":%.4f,\"low_cut\":%.1f,"
+            "\"retrigger_ms\":%.1f,\"wave_zoom\":%d}",
+            escaped_path, instance->absolute_mode, instance->fader_cc,
+            instance->fader_channel, instance->hamster, instance->cut_in,
+            instance->curve, instance->low_cut_hz, instance->retrigger_ms,
+            instance->wave_zoom);
+    }
     else if (strcmp(key, "monitor") == 0 || strcmp(key, "scratch_view") == 0)
         value = snprintf(out, out_len, "%s", "");
     else if (strcmp(key, "scratch_view_status") == 0 ||
@@ -465,21 +628,46 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
         static const char hex[] = "0123456789abcdef";
         char envelope[129];
         double centre = instance->engine.position_frames;
-        const double window_frames = 44100.0 * 4.0;
+        static const double zoom_seconds[] = {1.0, 4.0, 16.0};
+        double playhead = 64.0;
         int x;
         for (x = 0; x < 128; ++x) {
-            double frame = centre + ((double)x - 64.0) * window_frames / 128.0;
             unsigned int level = 0;
-            if (frame >= 0.0 && instance->waveform &&
-                (size_t)(frame / WAVEFORM_BIN_FRAMES) < instance->waveform_bins) {
-                level = instance->waveform[(size_t)(frame / WAVEFORM_BIN_FRAMES)] >> 4;
+            if (instance->wave_zoom == 3) {
+                if (instance->overview)
+                    level = instance->overview[x] >> 4;
+            } else if (instance->waveform) {
+                double window_frames = 44100.0 * zoom_seconds[instance->wave_zoom];
+                double frame_a = centre + ((double)x - 64.0) * window_frames / 128.0;
+                double frame_b = centre + ((double)x - 63.0) * window_frames / 128.0;
+                if (frame_b > 0.0 && frame_a < (double)instance->engine.sample_frames) {
+                    size_t first;
+                    size_t last;
+                    size_t bin;
+                    unsigned char peak = 0;
+                    if (frame_a < 0.0) frame_a = 0.0;
+                    if (frame_b > (double)instance->engine.sample_frames)
+                        frame_b = (double)instance->engine.sample_frames;
+                    first = (size_t)(frame_a / WAVEFORM_BIN_FRAMES);
+                    last = (size_t)((frame_b + WAVEFORM_BIN_FRAMES - 1) /
+                                    WAVEFORM_BIN_FRAMES);
+                    if (last <= first) last = first + 1;
+                    for (bin = first; bin < last && bin < instance->waveform_bins; ++bin) {
+                        if (instance->waveform[bin] > peak)
+                            peak = instance->waveform[bin];
+                    }
+                    level = peak >> 4;
+                }
             }
             envelope[x] = hex[level & 0x0f];
         }
+        if (instance->wave_zoom == 3 && instance->engine.sample_frames > 1)
+            playhead = centre * 127.0 / (double)(instance->engine.sample_frames - 1);
         envelope[128] = '\0';
-        value = snprintf(out, out_len, "%.3f,%.4f,%d,%s",
+        value = snprintf(out, out_len, "%.3f,%.4f,%d,%d,%.2f,%s",
                          centre / 44100.0, instance->decoded_pitch,
-                         instance->decoded_locked, envelope);
+                         instance->decoded_locked, instance->wave_zoom,
+                         playhead, envelope);
     }
     else if (strcmp(key, "dvs_status") == 0) {
         static const char hex[] = "0123456789abcdef";
@@ -491,7 +679,7 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
         }
         scope[32] = '\0';
         value = snprintf(out, out_len,
-                         "%.4f,%.4f,%.4f,%.3f,%.3f,%d,%.2f,%05x,%d,%d,%d,%d,%d,%d,%s",
+                         "%.4f,%.4f,%.4f,%.3f,%.3f,%d,%.2f,%05x,%d,%d,%d,%d,%d,%d,%s,%d,%zu,%.3f,%.3f",
                          instance->input_peak_l, instance->input_peak_r,
                          instance->decoded_pitch,
                          instance->decoded_position_seconds,
@@ -502,7 +690,10 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
                          !!(instance->held_notes[0] || instance->held_notes[1] ||
                             instance->held_notes[2] || instance->held_notes[3]),
                          instance->last_note, instance->last_note_source,
-                         scope);
+                         scope, atomic_load(&instance->loader_state),
+                         instance->engine.sample_frames,
+                         instance->engine.position_frames / 44100.0,
+                         instance->engine.fader);
     }
     else if (strcmp(key, "cut_in") == 0)
         value = snprintf(out, out_len, "%.3f", instance->cut_in);
@@ -555,6 +746,8 @@ static void scratch_render(void *opaque, int16_t *out_lr, int frames)
                                                   memory_order_relaxed);
         instance->waveform_bins = atomic_load_explicit(
             &instance->published_waveform_bins, memory_order_relaxed);
+        instance->overview = atomic_load_explicit(&instance->published_overview,
+                                                  memory_order_relaxed);
         instance->local_generation = generation;
         atomic_store_explicit(&instance->adopted_generation, generation,
                               memory_order_release);

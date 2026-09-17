@@ -4,7 +4,9 @@ function parseView(raw) {
         position: Number(p[0]) || 0,
         pitch: Number(p[1]) || 0,
         locked: Number(p[2]) === 1,
-        envelope: p[3] || "",
+        zoom: Number(p[3]) || 0,
+        playhead: Number(p[4]),
+        envelope: p[5] || "",
     };
 }
 
@@ -26,13 +28,17 @@ globalThis.canvas_overlay = {
             ctx.fillRect(x, middle - half, Math.max(1, nextX - x), half * 2 + 1, 1);
         }
 
-        // Fixed playhead: the waveform moves beneath this line.
-        const playhead = Math.floor(width / 2);
+        // Scrolling modes keep the playhead centred. Overview keeps the whole
+        // sample still and moves this line across it.
+        const playhead = s.zoom === 3 && Number.isFinite(s.playhead)
+            ? Math.max(0, Math.min(width - 1, Math.round(s.playhead * (width - 1) / 127)))
+            : Math.floor(width / 2);
         ctx.fillRect(playhead, 0, 1, height, 1);
         ctx.fillRect(playhead - 2, 0, 5, 1, 1);
         ctx.print(1, 1, `${s.position.toFixed(2)}s`, 1);
         const direction = Math.abs(s.pitch) < 0.02 ? "STOP" : (s.pitch < 0 ? "REV" : "FWD");
+        const zoomLabel = ["1S", "4S", "16S", "ALL"][s.zoom] || "?";
         ctx.print(Math.max(70, width - 44), 1,
-                  `${s.locked ? "L" : "?"} ${direction}`, 1);
+                  `${zoomLabel} ${direction}`, 1);
     },
 };

@@ -86,12 +86,46 @@ static void test_absolute_position(void)
     assert(fabs(engine.rate - 1.0) < 0.0001);
 }
 
+static void test_pad_retrigger_cut(void)
+{
+    int16_t sample[] = {1000, -1000};
+    int16_t out[8] = {0};
+    scratch_engine_t engine;
+
+    scratch_engine_init(&engine, 44100, 44100);
+    scratch_engine_set_sample(&engine, sample, 1);
+    scratch_engine_set_fader(&engine, 1.0f);
+    scratch_engine_retrigger(&engine, 2);
+    scratch_engine_render(&engine, out, 4);
+
+    assert(out[0] == 0 && out[2] == 0);
+    assert(out[4] == 1000 && out[6] == 1000);
+}
+
+static void test_low_cut_removes_dc(void)
+{
+    int16_t sample[] = {12000, 12000};
+    int16_t out[128] = {0};
+    scratch_engine_t engine;
+
+    scratch_engine_init(&engine, 1000, 1000);
+    scratch_engine_set_sample(&engine, sample, 1);
+    scratch_engine_set_fader(&engine, 1.0f);
+    scratch_engine_set_low_cut(&engine, 100.0f);
+    scratch_engine_render(&engine, out, 64);
+
+    assert(abs(out[0]) > 1000);
+    assert(abs(out[126]) < 10);
+}
+
 int main(void)
 {
     test_forward_and_reverse();
     test_fractional_interpolation();
     test_fader_cut();
     test_absolute_position();
+    test_pad_retrigger_cut();
+    test_low_cut_removes_dc();
     puts("scratch_engine: all tests passed");
     return 0;
 }

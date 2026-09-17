@@ -13,6 +13,11 @@ typedef struct scratch_engine {
     double position_frames;
     double rate;
     float fader;
+    float low_cut_hz;
+    double highpass_alpha;
+    double highpass_prev_in[2];
+    double highpass_prev_out[2];
+    unsigned int retrigger_samples;
 } scratch_engine_t;
 
 void scratch_engine_init(scratch_engine_t *engine,
@@ -24,6 +29,8 @@ void scratch_engine_set_sample(scratch_engine_t *engine,
 void scratch_engine_set_position(scratch_engine_t *engine, double frame);
 void scratch_engine_set_rate(scratch_engine_t *engine, double rate);
 void scratch_engine_set_fader(scratch_engine_t *engine, float gain);
+void scratch_engine_set_low_cut(scratch_engine_t *engine, float hz);
+void scratch_engine_retrigger(scratch_engine_t *engine, unsigned int samples);
 void scratch_engine_follow_timecode(scratch_engine_t *engine,
                                     double pitch,
                                     double position_seconds,

@@ -12,7 +12,9 @@ the output cut.
 Choose **Sample** in the module parameter page to open Schwung's built-in
 sample browser. The current decoder accepts 44.1 kHz, 16-bit, stereo PCM WAV
 files. The selected absolute path is stored with the chain state and reloaded
-by a background worker.
+by a background worker. New instances start with the bundled **Ahh Fresh**
+sample, created and contributed by Matt Estela; choosing another sample or
+restoring a saved chain overrides it.
 
 Connect stereo line-level timecode audio to Move's 3.5 mm input and the MIDI
 device to Move's USB-A host port. The default fader mapping is CC 1 on any MIDI

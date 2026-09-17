@@ -20,6 +20,10 @@ function parseStatus(raw) {
         note: Number(p[12]),
         noteSource: Number(p[13]),
         scope: p[14] || "",
+        load: Number(p[15]),
+        frames: Number(p[16]) || 0,
+        enginePosition: Number(p[17]) || 0,
+        gain: Number(p[18]) || 0,
     };
 }
 
@@ -73,12 +77,10 @@ globalThis.canvas_overlay = {
         ctx.print(30, 16, `Q${q}`, 1);
         ctx.print(1, 24, `${direction} ${s.pitch.toFixed(2)}x`, 1);
         ctx.print(1, 32, `${s.position.toFixed(2)}s ${s.word}`, 1);
+        ctx.print(76, 34, `LD${s.load} ${(s.frames / 44100).toFixed(1)}s`, 1);
+        ctx.print(76, 42, `P${s.enginePosition.toFixed(2)} G${s.gain.toFixed(1)}`, 1);
         if (Number.isFinite(s.cc) && Number.isFinite(s.ccValue))
-            ctx.print(76, 34, `CC${s.cc}:${s.ccValue}`, 1);
-        if (s.padGate)
-            ctx.print(76, 42, s.padHeld ? "PAD DOWN" : "PAD UP", 1);
-        if (Number.isFinite(s.note))
-            ctx.print(76, 50, `N${s.note} S${s.noteSource}`, 1);
+            ctx.print(76, 50, `CC${s.cc}:${s.ccValue}`, 1);
         plotScope(ctx, s.scope);
     },
 };

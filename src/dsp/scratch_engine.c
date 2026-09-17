@@ -73,6 +73,28 @@ void scratch_engine_set_fader(scratch_engine_t *engine, float gain)
     engine->fader = clamp_float(gain, 0.0f, 1.0f);
 }
 
+void scratch_engine_set_low_cut(scratch_engine_t *engine, float hz)
+{
+    const double pi = 3.14159265358979323846;
+    engine->low_cut_hz = clamp_float(hz, 0.0f, 300.0f);
+    if (engine->low_cut_hz <= 0.0f) {
+        engine->highpass_alpha = 0.0;
+        engine->highpass_prev_in[0] = engine->highpass_prev_in[1] = 0.0;
+        engine->highpass_prev_out[0] = engine->highpass_prev_out[1] = 0.0;
+        return;
+    }
+    {
+        double rc = 1.0 / (2.0 * pi * engine->low_cut_hz);
+        double dt = 1.0 / engine->output_rate;
+        engine->highpass_alpha = rc / (rc + dt);
+    }
+}
+
+void scratch_engine_retrigger(scratch_engine_t *engine, unsigned int samples)
+{
+    engine->retrigger_samples = samples;
+}
+
 void scratch_engine_follow_timecode(scratch_engine_t *engine,
                                     double pitch,
                                     double position_seconds,
@@ -109,8 +131,26 @@ void scratch_engine_render(scratch_engine_t *engine,
         double right = engine->sample_lr[a * 2 + 1] * (1.0 - fraction) +
                        engine->sample_lr[b * 2 + 1] * fraction;
 
-        out_lr[i * 2] = clamp_i16(left * engine->fader);
-        out_lr[i * 2 + 1] = clamp_i16(right * engine->fader);
+        if (engine->highpass_alpha > 0.0) {
+            double filtered_left = engine->highpass_alpha *
+                (engine->highpass_prev_out[0] + left - engine->highpass_prev_in[0]);
+            double filtered_right = engine->highpass_alpha *
+                (engine->highpass_prev_out[1] + right - engine->highpass_prev_in[1]);
+            engine->highpass_prev_in[0] = left;
+            engine->highpass_prev_in[1] = right;
+            engine->highpass_prev_out[0] = filtered_left;
+            engine->highpass_prev_out[1] = filtered_right;
+            left = filtered_left;
+            right = filtered_right;
+        }
+
+        {
+            float gate = engine->retrigger_samples > 0 ? 0.0f : engine->fader;
+            if (engine->retrigger_samples > 0)
+                engine->retrigger_samples--;
+            out_lr[i * 2] = clamp_i16(left * gate);
+            out_lr[i * 2 + 1] = clamp_i16(right * gate);
+        }
 
         engine->position_frames += step;
         if (engine->position_frames < 0.0)

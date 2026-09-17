@@ -2,7 +2,7 @@
   "id": "scratch",
   "name": "Scratch",
   "abbrev": "SCR",
-  "version": "0.2.1",
+  "version": "0.3.1",
   "author": "mestela",
   "description": "Scratch a digital sample with Serato control vinyl and a USB MIDI fader",
   "dsp": "dsp.so",
@@ -25,7 +25,10 @@
       {"key":"hamster", "name":"Hamster", "type":"enum", "options":["Off","On"], "default":0},
       {"key":"cut_in", "name":"Cut In", "type":"float", "min":0, "max":0.95, "step":0.01, "default":0.03},
       {"key":"curve", "name":"Curve", "type":"float", "min":0.1, "max":4, "step":0.1, "default":1},
-      {"key":"dvs_status", "name":"DVS Status", "type":"string", "access":"read"},
+      {"key":"low_cut", "name":"Low Cut", "type":"float", "min":0, "max":300, "step":5, "unit":"Hz", "default":100},
+      {"key":"retrigger_ms", "name":"Retrigger", "type":"float", "min":0, "max":30, "step":0.5, "unit":"ms", "default":8.7},
+      {"key":"wave_zoom", "name":"Wave Zoom", "type":"enum", "options":["1 sec","4 sec","16 sec","Overview"], "default":1},
+      {"key":"dvs_status", "name":"DVS Status", "type":"string", "access":"read", "live":true},
       {"key":"monitor", "name":"DVS Monitor", "type":"canvas", "canvas_script":"monitor.js", "as_page":true, "show_value":false, "extra_keys":["dvs_status"]},
       {"key":"scratch_view_status", "name":"Scratch View Status", "type":"string", "access":"read", "live":true},
       {"key":"scratch_view", "name":"Scratch View", "type":"canvas", "canvas_script":"scratch_view.js", "as_page":true, "show_value":false, "extra_keys":["scratch_view_status"]}
@@ -34,8 +37,8 @@
       "levels": {
         "root": {
           "label": "Scratch",
-          "params": ["sample_file", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve", "monitor", "scratch_view"],
-          "knobs": ["sample_file", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve"]
+          "params": ["sample_file", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve", "low_cut", "retrigger_ms", "wave_zoom", "scratch_view", "monitor"],
+          "knobs": ["sample_file", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve", "low_cut", "retrigger_ms", "wave_zoom"]
         }
       }
     }

@@ -10,11 +10,11 @@ const ctx = {
 
 globalThis.canvas_overlay.drawPage(ctx, {
     values: {
-        scratch_view_status: `12.345,-1.02,1,${"123456789abcdef".repeat(9).slice(0, 128)}`,
+        scratch_view_status: `12.345,-1.02,1,1,64,${"123456789abcdef".repeat(9).slice(0, 128)}`,
     },
 });
 
-if (!calls.some((call) => call[0] === "fillRect" && call[1] === 64 && call[3] === 1))
+if (!calls.some((call) => call[0] === "fillRect" && call[1] === 64 && call[2] === 0 && call[3] === 1 && call[4] === 64))
     throw new Error("scratch view did not render the fixed centre playhead");
 if (!calls.some((call) => call[0] === "print" && String(call[3]).includes("REV")))
     throw new Error("scratch view did not render reverse direction");
@@ -22,3 +22,12 @@ if (calls.filter((call) => call[0] === "fillRect").length < 100)
     throw new Error("scratch view did not render the waveform envelope");
 
 console.log(`scratch view: rendered ${calls.length} draw calls`);
+
+calls.length = 0;
+globalThis.canvas_overlay.drawPage(ctx, {
+    values: {
+        scratch_view_status: `1.000,1.0,1,3,20,${"8".repeat(128)}`,
+    },
+});
+if (!calls.some((call) => call[0] === "fillRect" && call[1] === 20 && call[2] === 0 && call[3] === 1 && call[4] === 64))
+    throw new Error("overview did not move the playhead across the fixed waveform");
