@@ -55,6 +55,17 @@ typedef struct scratch_instance {
     float low_cut_hz;
     float retrigger_ms;
     int wave_zoom;
+    int jog_active;
+    int jog_gate_open;
+    int knob_touched;
+    int control_mode;
+    int virtual_play;
+    float jog_sensitivity;
+    float virtual_speed;
+    float platter_value;
+    int platter_initialized;
+    unsigned int virtual_samples_remaining;
+    unsigned int keepalive_phase;
     float fader_raw;
     uint32_t held_notes[4];
     int pad_gate_active;
@@ -374,9 +385,10 @@ static void apply_gate(scratch_instance_t *instance)
 {
     int any_note = instance->held_notes[0] || instance->held_notes[1] ||
                    instance->held_notes[2] || instance->held_notes[3];
+    int jog_gate_active = instance->control_mode == 2 && instance->jog_active;
     float gain;
-    if (instance->pad_gate_active) {
-        int gate_open = any_note;
+    if (jog_gate_active || instance->pad_gate_active) {
+        int gate_open = jog_gate_active ? instance->jog_gate_open : any_note;
         if (instance->hamster)
             gate_open = !gate_open;
         gain = gate_open ? 1.0f : 0.0f;
@@ -401,6 +413,10 @@ static void *scratch_create(const char *module_dir, const char *json_defaults)
     instance->low_cut_hz = 100.0f;
     instance->retrigger_ms = 8.7f;
     instance->wave_zoom = 1;
+    instance->jog_sensitivity = 0.55f;
+    instance->virtual_play = 1;
+    instance->virtual_speed = 1.0f;
+    instance->platter_value = 0.5f;
     instance->fader_raw = 1.0f;
     instance->pad_gate_active = 1;
     if (module_dir && module_dir[0])
@@ -439,7 +455,24 @@ static void scratch_on_midi(void *opaque, const uint8_t *msg, int len, int sourc
     status = msg[0] & 0xf0;
     channel = msg[0] & 0x0f;
 
-    if (msg[1] < 128 && (status == 0x80 || status == 0x90)) {
+    /* Knob Scratch is the sixth physical encoder on Main 2, whose capacitive
+     * touch is note 5. Touch holds the virtual record; release restarts its
+     * motor. Do this before the pad path so knob touches never open the gate. */
+    if (instance->control_mode == 1 && msg[1] == 5 &&
+        (status == 0x80 || status == 0x90)) {
+        instance->knob_touched = status == 0x90 && msg[2] != 0;
+        scratch_engine_jog(&instance->engine,
+                           instance->knob_touched ? 0.0 :
+                           (instance->virtual_play ? instance->virtual_speed : 0.0),
+                           0);
+        return;
+    }
+
+    /* The canvas sees raw physical pads (68-99), but the sound-generator DSP
+     * receives the selected layout's translated musical notes. Notes 0-9 are
+     * Move's capacitive knob touches; everything above that is playable. */
+    if (msg[1] >= 10 &&
+        (status == 0x80 || status == 0x90)) {
         unsigned int word = msg[1] >> 5;
         uint32_t bit = 1u << (msg[1] & 31);
         instance->last_note = msg[1];
@@ -482,8 +515,9 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
         return;
     if (strcmp(key, "state") == 0) {
         static const char *const numeric_keys[] = {
-            "mode", "fader_cc", "fader_channel", "hamster", "cut_in",
-            "curve", "low_cut", "retrigger_ms", "wave_zoom"
+            "control_mode", "mode", "fader_cc", "fader_channel", "hamster", "cut_in",
+            "curve", "low_cut", "retrigger_ms", "wave_zoom",
+            "jog_sensitivity", "virtual_play", "virtual_speed"
         };
         char path[PATH_MAX];
         size_t i;
@@ -528,6 +562,77 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
         instance->retrigger_ms = fminf(30.0f, fmaxf(0.0f, strtof(value, NULL)));
     else if (strcmp(key, "wave_zoom") == 0)
         instance->wave_zoom = atoi(value) < 0 ? 0 : (atoi(value) > 3 ? 3 : atoi(value));
+    else if (strcmp(key, "control_mode") == 0) {
+        int mode = atoi(value);
+        instance->control_mode = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
+        instance->knob_touched = 0;
+        instance->virtual_samples_remaining = 0;
+        if (instance->control_mode != 2) {
+            instance->jog_active = 0;
+            instance->jog_gate_open = 0;
+        }
+        if (instance->control_mode == 0) {
+            scratch_engine_jog(&instance->engine, 0.0, 0);
+        } else {
+            scratch_engine_set_rate(&instance->engine,
+                                    instance->virtual_play ? instance->virtual_speed : 0.0);
+        }
+    }
+    else if (strcmp(key, "jog_active") == 0) {
+        instance->jog_active = instance->control_mode == 2 && atoi(value) != 0;
+        if (instance->jog_active && instance->control_mode == 2) {
+            instance->jog_gate_open = 0;
+            scratch_engine_jog(&instance->engine,
+                               instance->virtual_play ? instance->virtual_speed : 0.0,
+                               0);
+        } else {
+            scratch_engine_jog(&instance->engine, 0.0, 0);
+        }
+    }
+    else if (strcmp(key, "jog_delta") == 0) {
+        double delta = strtod(value, NULL);
+        if (instance->jog_active && instance->control_mode == 2)
+            scratch_engine_jog(&instance->engine,
+                               delta * instance->jog_sensitivity,
+                               0);
+        if (instance->jog_active && instance->control_mode == 2)
+            instance->virtual_samples_remaining = 5292; /* 120 ms release. */
+    }
+    else if (strcmp(key, "jog_gate") == 0) {
+        int command = atoi(value);
+        instance->jog_gate_open = command != 0;
+        if (instance->control_mode == 2 && instance->jog_active && command > 1)
+            scratch_engine_retrigger(&instance->engine,
+                (unsigned int)lrintf(instance->retrigger_ms * 44.1f));
+    }
+    else if (strcmp(key, "jog_sensitivity") == 0)
+        instance->jog_sensitivity = fminf(2.0f, fmaxf(0.1f, strtof(value, NULL)));
+    else if (strcmp(key, "virtual_play") == 0) {
+        instance->virtual_play = atoi(value) != 0;
+        if (instance->control_mode != 0 &&
+            !instance->knob_touched && instance->virtual_samples_remaining == 0)
+            scratch_engine_set_rate(&instance->engine,
+                                    instance->virtual_play ? instance->virtual_speed : 0.0);
+    }
+    else if (strcmp(key, "virtual_speed") == 0) {
+        instance->virtual_speed = fminf(2.0f, fmaxf(0.1f, strtof(value, NULL)));
+        if (instance->control_mode != 0 &&
+            instance->virtual_play && !instance->knob_touched &&
+            instance->virtual_samples_remaining == 0)
+            scratch_engine_set_rate(&instance->engine, instance->virtual_speed);
+    }
+    else if (strcmp(key, "platter") == 0) {
+        float next = fminf(1.0f, fmaxf(0.0f, strtof(value, NULL)));
+        if (instance->platter_initialized && instance->control_mode == 1) {
+            float delta = next - instance->platter_value;
+            scratch_engine_jog(&instance->engine,
+                               delta * 50.0f * instance->jog_sensitivity,
+                               0);
+            instance->virtual_samples_remaining = 5292;
+        }
+        instance->platter_value = next;
+        instance->platter_initialized = 1;
+    }
     apply_gate(instance);
 }
 
@@ -544,6 +649,8 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
               "\"root\":\"/data/UserData/UserLibrary/Samples\","
               "\"start_path\":\"/data/UserData/UserLibrary/Samples\","
               "\"filter\":\".wav\",\"default\":\"\"},"
+            "{\"key\":\"control_mode\",\"name\":\"Control\",\"type\":\"enum\","
+              "\"options\":[\"DVS\",\"Knob\",\"Jog\"],\"default\":0},"
             "{\"key\":\"mode\",\"name\":\"Tracking\",\"type\":\"enum\","
               "\"options\":[\"Relative\",\"Absolute\"],\"default\":0},"
             "{\"key\":\"fader_cc\",\"name\":\"Fader CC\",\"type\":\"int\","
@@ -564,6 +671,16 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
               "\"min\":0,\"max\":30,\"step\":0.5,\"unit\":\"ms\",\"default\":8.7},"
             "{\"key\":\"wave_zoom\",\"name\":\"Wave Zoom\",\"type\":\"enum\","
               "\"options\":[\"1 sec\",\"4 sec\",\"16 sec\",\"Overview\"],\"default\":1},"
+            "{\"key\":\"jog_sensitivity\",\"name\":\"Jog Feel\",\"type\":\"float\","
+              "\"min\":0.1,\"max\":2,\"step\":0.05,\"default\":0.55},"
+            "{\"key\":\"virtual_play\",\"name\":\"Motor\",\"type\":\"enum\","
+              "\"options\":[\"Stop\",\"Play\"],\"default\":1},"
+            "{\"key\":\"virtual_speed\",\"name\":\"Motor Speed\",\"type\":\"float\","
+              "\"min\":0.1,\"max\":2,\"step\":0.05,\"unit\":\"x\",\"default\":1},"
+            "{\"key\":\"platter\",\"name\":\"Knob Scratch\",\"type\":\"float\","
+              "\"min\":0,\"max\":1,\"step\":0.01,\"default\":0.5},"
+            "{\"key\":\"jog_scratch\",\"name\":\"Jog Scratch\",\"type\":\"canvas\","
+              "\"canvas_script\":\"jog_scratch.js\",\"show_value\":false,\"show_footer\":false},"
             "{\"key\":\"dvs_status\",\"name\":\"DVS Status\",\"type\":\"string\","
               "\"access\":\"read\",\"live\":true},"
             "{\"key\":\"monitor\",\"name\":\"DVS Monitor\",\"type\":\"canvas\","
@@ -579,12 +696,14 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
     } else if (strcmp(key, "ui_hierarchy") == 0) {
         static const char hierarchy[] =
             "{\"levels\":{\"root\":{\"label\":\"Scratch\","
-            "\"params\":[\"sample_file\",\"mode\",\"fader_cc\",\"fader_channel\","
-                         "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\",\"low_cut\",\"retrigger_ms\",\"wave_zoom\",\"scratch_view\",\"monitor\"],"
-            "\"knobs\":[\"sample_file\",\"mode\",\"fader_cc\",\"fader_channel\","
-                        "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\",\"low_cut\",\"retrigger_ms\",\"wave_zoom\"]}}}";
+            "\"params\":[\"sample_file\",\"control_mode\",\"mode\",\"fader_cc\",\"fader_channel\","
+                         "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\",\"low_cut\",\"retrigger_ms\",\"wave_zoom\",\"jog_sensitivity\",\"platter\",\"jog_scratch\",\"virtual_play\",\"virtual_speed\",\"scratch_view\",\"monitor\"],"
+            "\"knobs\":[\"sample_file\",\"control_mode\",\"mode\",\"fader_cc\",\"fader_channel\","
+                        "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\",\"low_cut\",\"retrigger_ms\",\"wave_zoom\",\"jog_sensitivity\",\"platter\",\"jog_scratch\",\"virtual_play\",\"virtual_speed\"]}}}";
         value = snprintf(out, out_len, "%s", hierarchy);
-    } else if (strcmp(key, "mode") == 0)
+    } else if (strcmp(key, "control_mode") == 0)
+        value = snprintf(out, out_len, "%d", instance->control_mode);
+    else if (strcmp(key, "mode") == 0)
         value = snprintf(out, out_len, "%d", instance->absolute_mode);
     else if (strcmp(key, "fader_cc") == 0)
         value = snprintf(out, out_len, "%d", instance->fader_cc);
@@ -600,6 +719,16 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
         value = snprintf(out, out_len, "%.1f", instance->retrigger_ms);
     else if (strcmp(key, "wave_zoom") == 0)
         value = snprintf(out, out_len, "%d", instance->wave_zoom);
+    else if (strcmp(key, "jog_sensitivity") == 0)
+        value = snprintf(out, out_len, "%.2f", instance->jog_sensitivity);
+    else if (strcmp(key, "virtual_play") == 0)
+        value = snprintf(out, out_len, "%d", instance->virtual_play);
+    else if (strcmp(key, "virtual_speed") == 0)
+        value = snprintf(out, out_len, "%.2f", instance->virtual_speed);
+    else if (strcmp(key, "platter") == 0)
+        value = snprintf(out, out_len, "%.2f", instance->platter_value);
+    else if (strcmp(key, "jog_scratch") == 0)
+        value = snprintf(out, out_len, "%s", "");
     else if (strcmp(key, "last_cc") == 0)
         value = snprintf(out, out_len, "%d", instance->last_cc);
     else if (strcmp(key, "last_value") == 0)
@@ -611,14 +740,16 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
         if (!json_escape(instance->requested_path, escaped_path, sizeof(escaped_path)))
             return -1;
         value = snprintf(out, out_len,
-            "{\"version\":1,\"sample_file\":\"%s\",\"mode\":%d,"
+            "{\"version\":1,\"sample_file\":\"%s\",\"control_mode\":%d,\"mode\":%d,"
             "\"fader_cc\":%d,\"fader_channel\":%d,\"hamster\":%d,"
             "\"cut_in\":%.4f,\"curve\":%.4f,\"low_cut\":%.1f,"
-            "\"retrigger_ms\":%.1f,\"wave_zoom\":%d}",
-            escaped_path, instance->absolute_mode, instance->fader_cc,
+            "\"retrigger_ms\":%.1f,\"wave_zoom\":%d,\"jog_sensitivity\":%.3f,"
+            "\"virtual_play\":%d,\"virtual_speed\":%.3f}",
+            escaped_path, instance->control_mode, instance->absolute_mode, instance->fader_cc,
             instance->fader_channel, instance->hamster, instance->cut_in,
             instance->curve, instance->low_cut_hz, instance->retrigger_ms,
-            instance->wave_zoom);
+            instance->wave_zoom, instance->jog_sensitivity,
+            instance->virtual_play, instance->virtual_speed);
     }
     else if (strcmp(key, "monitor") == 0 || strcmp(key, "scratch_view") == 0)
         value = snprintf(out, out_len, "%s", "");
@@ -793,14 +924,43 @@ static void scratch_render(void *opaque, int16_t *out_lr, int frames)
     instance->decoded_age_ms = when * 1000.0;
     instance->decoded_quality = fminf(1.0f, instance->decoder.valid_counter / 48.0f);
     instance->decoded_word = instance->decoder.bitstream;
-    scratch_engine_follow_timecode(
-        &instance->engine, pitch,
-        instance->decoded_position_seconds,
-        position >= 0, instance->absolute_mode != 0);
+    if (instance->control_mode == 0)
+        scratch_engine_follow_timecode(
+            &instance->engine, pitch,
+            instance->decoded_position_seconds,
+            position >= 0, instance->absolute_mode != 0);
     if (atomic_load_explicit(&instance->loader_state, memory_order_acquire) == 1)
         scratch_engine_render(&instance->engine, out_lr, frames);
     else
         memset(out_lr, 0, (size_t)frames * 2 * sizeof(*out_lr));
+
+    /* Schwung's slot scheduler parks a sound generator after one second of
+     * silence; requires_continuous_processing currently applies only to FX.
+     * A parked DVS decoder cannot see enough consecutive control-vinyl blocks
+     * to lock again until MIDI wakes it. Keep one rotating sample just above
+     * the host's +/-4 idle threshold. Its block RMS is below -97 dBFS. */
+    {
+        int audible = 0;
+        for (i = 0; i < frames * 2; ++i) {
+            if (out_lr[i] > 4 || out_lr[i] < -4) {
+                audible = 1;
+                break;
+            }
+        }
+        if (!audible && frames > 0) {
+            unsigned int sample = instance->keepalive_phase++ % (unsigned int)frames;
+            out_lr[sample * 2] = (instance->keepalive_phase & 1u) ? 5 : -5;
+            out_lr[sample * 2 + 1] = -out_lr[sample * 2];
+        }
+    }
+    if (instance->virtual_samples_remaining > (unsigned int)frames) {
+        instance->virtual_samples_remaining -= (unsigned int)frames;
+    } else if (instance->virtual_samples_remaining > 0) {
+        instance->virtual_samples_remaining = 0;
+        if (instance->control_mode != 0 && !instance->knob_touched)
+            scratch_engine_set_rate(&instance->engine,
+                                    instance->virtual_play ? instance->virtual_speed : 0.0);
+    }
 }
 
 static plugin_api_v2_t g_api = {

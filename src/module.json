@@ -2,7 +2,7 @@
   "id": "scratch",
   "name": "Scratch",
   "abbrev": "SCR",
-  "version": "0.3.1",
+  "version": "0.4.1",
   "author": "mestela",
   "description": "Scratch a digital sample with Serato control vinyl and a USB MIDI fader",
   "dsp": "dsp.so",
@@ -18,6 +18,7 @@
     "component_type": "sound_generator",
     "chain_params": [
       {"key":"sample_file", "name":"Sample", "type":"filepath", "root":"/data/UserData/UserLibrary/Samples", "start_path":"/data/UserData/UserLibrary/Samples", "filter":".wav", "default":""},
+      {"key":"control_mode", "name":"Control", "type":"enum", "options":["DVS","Knob","Jog"], "default":0},
       {"key":"mode", "name":"Tracking", "type":"enum", "options":["Relative","Absolute"], "default":0},
       {"key":"fader_cc", "name":"Fader CC", "type":"int", "min":0, "max":127, "step":1, "default":1},
       {"key":"fader_channel", "name":"MIDI Ch", "type":"int", "min":0, "max":16, "step":1, "default":16},
@@ -28,6 +29,11 @@
       {"key":"low_cut", "name":"Low Cut", "type":"float", "min":0, "max":300, "step":5, "unit":"Hz", "default":100},
       {"key":"retrigger_ms", "name":"Retrigger", "type":"float", "min":0, "max":30, "step":0.5, "unit":"ms", "default":8.7},
       {"key":"wave_zoom", "name":"Wave Zoom", "type":"enum", "options":["1 sec","4 sec","16 sec","Overview"], "default":1},
+      {"key":"jog_sensitivity", "name":"Jog Feel", "type":"float", "min":0.1, "max":2, "step":0.05, "default":0.55},
+      {"key":"virtual_play", "name":"Motor", "type":"enum", "options":["Stop","Play"], "default":1},
+      {"key":"virtual_speed", "name":"Motor Speed", "type":"float", "min":0.1, "max":2, "step":0.05, "unit":"x", "default":1},
+      {"key":"platter", "name":"Knob Scratch", "type":"float", "min":0, "max":1, "step":0.01, "default":0.5},
+      {"key":"jog_scratch", "name":"Jog Scratch", "type":"canvas", "canvas_script":"jog_scratch.js", "show_value":false, "show_footer":false},
       {"key":"dvs_status", "name":"DVS Status", "type":"string", "access":"read", "live":true},
       {"key":"monitor", "name":"DVS Monitor", "type":"canvas", "canvas_script":"monitor.js", "as_page":true, "show_value":false, "extra_keys":["dvs_status"]},
       {"key":"scratch_view_status", "name":"Scratch View Status", "type":"string", "access":"read", "live":true},
@@ -37,8 +43,8 @@
       "levels": {
         "root": {
           "label": "Scratch",
-          "params": ["sample_file", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve", "low_cut", "retrigger_ms", "wave_zoom", "scratch_view", "monitor"],
-          "knobs": ["sample_file", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve", "low_cut", "retrigger_ms", "wave_zoom"]
+          "params": ["sample_file", "control_mode", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve", "low_cut", "retrigger_ms", "wave_zoom", "jog_sensitivity", "platter", "jog_scratch", "virtual_play", "virtual_speed", "scratch_view", "monitor"],
+          "knobs": ["sample_file", "control_mode", "mode", "fader_cc", "fader_channel", "midi_learn", "hamster", "cut_in", "curve", "low_cut", "retrigger_ms", "wave_zoom", "jog_sensitivity", "platter", "jog_scratch", "virtual_play", "virtual_speed"]
         }
       }
     }

@@ -24,6 +24,14 @@ first incoming CC is stored with its MIDI channel. Use the OMNI's FADER switch
 to choose the physical left or right fader, and use either the OMNI REV switch
 or the module's Hamster option—not both.
 
+Without a turntable, **Knob Scratch** provides a simple bounded test control.
+For a more playable version, select **Jog Scratch** and press the jog wheel to
+open its full-screen mode. Turning the jog wheel then moves the sample instead
+of navigating the UI; pads remain momentary cut switches. Press the jog wheel
+or Back to leave the mode, and adjust **Jog Feel** to change its response. The
+virtual platter resumes forward playback after release; **Motor** starts or
+stops that playback and **Motor Speed** sets its forward rate.
+
 Run host tests with `./tests/run.sh`. Build the ARM64 module with
 `./scripts/build.sh`.
 

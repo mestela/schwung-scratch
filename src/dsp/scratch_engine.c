@@ -95,6 +95,13 @@ void scratch_engine_retrigger(scratch_engine_t *engine, unsigned int samples)
     engine->retrigger_samples = samples;
 }
 
+void scratch_engine_jog(scratch_engine_t *engine, double rate,
+                        unsigned int hold_samples)
+{
+    scratch_engine_set_rate(engine, rate);
+    engine->jog_samples_remaining = hold_samples;
+}
+
 void scratch_engine_follow_timecode(scratch_engine_t *engine,
                                     double pitch,
                                     double position_seconds,
@@ -153,6 +160,9 @@ void scratch_engine_render(scratch_engine_t *engine,
         }
 
         engine->position_frames += step;
+        if (engine->jog_samples_remaining > 0 &&
+            --engine->jog_samples_remaining == 0)
+            engine->rate = 0.0;
         if (engine->position_frames < 0.0)
             engine->position_frames = 0.0;
         else if (engine->position_frames >= (double)engine->sample_frames)

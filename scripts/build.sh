@@ -19,7 +19,8 @@ mkdir -p build dist/scratch/samples
     src/dsp/scratch.c src/dsp/scratch_engine.c \
     src/dsp/vendor/xwax/timecoder.c src/dsp/vendor/xwax/lut.c \
     -o build/dsp.so -lm -lpthread
-cp build/dsp.so src/module.json src/monitor.js src/scratch_view.js dist/scratch/
+cp build/dsp.so src/module.json src/monitor.js src/scratch_view.js \
+    src/jog_scratch.js dist/scratch/
 cp samples/ahh-fresh.wav dist/scratch/samples/
 cp COPYING THIRD_PARTY_LICENSES.md dist/scratch/
 tar -C dist -czf dist/scratch-module.tar.gz scratch
