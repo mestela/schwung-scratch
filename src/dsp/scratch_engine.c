@@ -38,6 +38,7 @@ void scratch_engine_init(scratch_engine_t *engine,
     engine->output_rate = output_rate;
     engine->sample_rate = sample_rate;
     engine->fader = 1.0f;
+    engine->loop = 1;
 }
 
 void scratch_engine_set_sample(scratch_engine_t *engine,
@@ -59,13 +60,36 @@ void scratch_engine_set_position(scratch_engine_t *engine, double frame)
         engine->position_frames = 0.0;
         return;
     }
-    engine->position_frames = clamp_double(
-        frame, 0.0, (double)(engine->sample_frames - 1));
+    if (engine->loop) {
+        double length = (double)engine->sample_frames;
+        engine->position_frames = fmod(frame, length);
+        if (engine->position_frames < 0.0)
+            engine->position_frames += length;
+    } else {
+        engine->position_frames = clamp_double(
+            frame, 0.0, (double)(engine->sample_frames - 1));
+    }
 }
 
 void scratch_engine_set_rate(scratch_engine_t *engine, double rate)
 {
     engine->rate = clamp_double(rate, -8.0, 8.0);
+    engine->target_rate = engine->rate;
+    engine->rate_slew = 0.0;
+    engine->rate_slew_samples = 0;
+}
+
+void scratch_engine_set_rate_smooth(scratch_engine_t *engine, double rate,
+                                    unsigned int samples)
+{
+    double target = clamp_double(rate, -8.0, 8.0);
+    if (samples == 0) {
+        scratch_engine_set_rate(engine, target);
+        return;
+    }
+    engine->target_rate = target;
+    engine->rate_slew = (target - engine->rate) / samples;
+    engine->rate_slew_samples = samples;
 }
 
 void scratch_engine_set_fader(scratch_engine_t *engine, float gain)
@@ -88,6 +112,11 @@ void scratch_engine_set_low_cut(scratch_engine_t *engine, float hz)
         double dt = 1.0 / engine->output_rate;
         engine->highpass_alpha = rc / (rc + dt);
     }
+}
+
+void scratch_engine_set_loop(scratch_engine_t *engine, int enabled)
+{
+    engine->loop = enabled != 0;
 }
 
 void scratch_engine_retrigger(scratch_engine_t *engine, unsigned int samples)
@@ -119,17 +148,15 @@ void scratch_engine_render(scratch_engine_t *engine,
                            int frames)
 {
     int i;
-    double step;
 
     if (!engine->sample_lr || engine->sample_frames == 0) {
         memset(out_lr, 0, (size_t)frames * 2 * sizeof(*out_lr));
         return;
     }
 
-    step = engine->rate * (double)engine->sample_rate /
-           (double)engine->output_rate;
-
     for (i = 0; i < frames; ++i) {
+        double step = engine->rate * (double)engine->sample_rate /
+                      (double)engine->output_rate;
         size_t a = (size_t)engine->position_frames;
         size_t b = a + 1 < engine->sample_frames ? a + 1 : a;
         double fraction = engine->position_frames - (double)a;
@@ -160,12 +187,25 @@ void scratch_engine_render(scratch_engine_t *engine,
         }
 
         engine->position_frames += step;
+        if (engine->rate_slew_samples > 0) {
+            engine->rate += engine->rate_slew;
+            if (--engine->rate_slew_samples == 0)
+                engine->rate = engine->target_rate;
+        }
         if (engine->jog_samples_remaining > 0 &&
             --engine->jog_samples_remaining == 0)
             engine->rate = 0.0;
-        if (engine->position_frames < 0.0)
+        if (engine->loop) {
+            double length = (double)engine->sample_frames;
+            if (engine->position_frames < 0.0 || engine->position_frames >= length) {
+                engine->position_frames = fmod(engine->position_frames, length);
+                if (engine->position_frames < 0.0)
+                    engine->position_frames += length;
+            }
+        } else if (engine->position_frames < 0.0) {
             engine->position_frames = 0.0;
-        else if (engine->position_frames >= (double)engine->sample_frames)
+        } else if (engine->position_frames >= (double)engine->sample_frames) {
             engine->position_frames = (double)(engine->sample_frames - 1);
+        }
     }
 }

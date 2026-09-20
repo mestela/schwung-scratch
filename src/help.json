@@ -1,0 +1,10 @@
+{
+  "title": "Scratch",
+  "children": [
+    {"title":"Overview","lines":["Scratch a WAV sample","with Serato vinyl,","Move's jog wheel,","or Knob 1.","","Pads act as the","crossfader cut."]},
+    {"title":"DVS setup","lines":["Send stereo Serato","timecode into Move's","line input.","","Choose DVS control.","DVS Monitor shows","level, direction and","decoder quality."]},
+    {"title":"Main controls","lines":["K1 Sample","K2 Control mode","K3 Scratch View","K4 Hamster","K5 Loop","K6 Low Cut","K7 Cut In","K8 Retrigger"]},
+    {"title":"Scratch View","lines":["Knob and Jog modes:","Feel, Smooth, Inertia,","Touch, Speed, Zoom","and Motor controls.","","DVS mode offers Speed","and Zoom. Click or","Back exits the view."]},
+    {"title":"Samples","lines":["Use 44.1 kHz, 16-bit","stereo PCM WAV files.","","The bundled Ahh Fresh","sample loads by","default. Selections","are saved per chain."]}
+  ]
+}

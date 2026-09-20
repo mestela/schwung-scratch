@@ -61,7 +61,12 @@ typedef struct scratch_instance {
     int control_mode;
     int virtual_play;
     float jog_sensitivity;
+    int jog_touch;
+    float knob_sensitivity;
     float virtual_speed;
+    float touch_inertia_ms;
+    float knob_smoothing_ms;
+    int loop;
     float platter_value;
     int platter_initialized;
     unsigned int virtual_samples_remaining;
@@ -385,10 +390,15 @@ static void apply_gate(scratch_instance_t *instance)
 {
     int any_note = instance->held_notes[0] || instance->held_notes[1] ||
                    instance->held_notes[2] || instance->held_notes[3];
-    int jog_gate_active = instance->control_mode == 2 && instance->jog_active;
+    int jog_gate_active = instance->jog_active;
     float gain;
     if (jog_gate_active || instance->pad_gate_active) {
-        int gate_open = jog_gate_active ? instance->jog_gate_open : any_note;
+        /* Hardware pads continue to reach the DSP while a fullscreen canvas
+         * is open, but Schwung does not duplicate them to the canvas onMidi
+         * hook unless passive pad observation is explicitly enabled. Always
+         * honor the DSP's real held-note state; jog_gate_open remains useful
+         * for hosts that do duplicate canvas pad messages. */
+        int gate_open = any_note || (jog_gate_active && instance->jog_gate_open);
         if (instance->hamster)
             gate_open = !gate_open;
         gain = gate_open ? 1.0f : 0.0f;
@@ -414,8 +424,12 @@ static void *scratch_create(const char *module_dir, const char *json_defaults)
     instance->retrigger_ms = 8.7f;
     instance->wave_zoom = 1;
     instance->jog_sensitivity = 0.55f;
+    instance->knob_sensitivity = 0.18f;
     instance->virtual_play = 1;
     instance->virtual_speed = 1.0f;
+    instance->touch_inertia_ms = 45.0f;
+    instance->knob_smoothing_ms = 25.0f;
+    instance->loop = 1;
     instance->platter_value = 0.5f;
     instance->fader_raw = 1.0f;
     instance->pad_gate_active = 1;
@@ -423,6 +437,7 @@ static void *scratch_create(const char *module_dir, const char *json_defaults)
         snprintf(instance->requested_path, sizeof(instance->requested_path),
                  "%s/samples/ahh-fresh.wav", module_dir);
     scratch_engine_set_low_cut(&instance->engine, instance->low_cut_hz);
+    scratch_engine_set_loop(&instance->engine, instance->loop);
     apply_gate(instance);
 
     if (pthread_create(&instance->loader_thread, NULL, loader_main, instance) != 0) {
@@ -455,16 +470,30 @@ static void scratch_on_midi(void *opaque, const uint8_t *msg, int len, int sourc
     status = msg[0] & 0xf0;
     channel = msg[0] & 0x0f;
 
-    /* Knob Scratch is the sixth physical encoder on Main 2, whose capacitive
-     * touch is note 5. Touch holds the virtual record; release restarts its
+    /* Knob Scratch is the first physical encoder on Main 2, whose capacitive
+     * touch is note 0. Touch holds the virtual record; release restarts its
      * motor. Do this before the pad path so knob touches never open the gate. */
-    if (instance->control_mode == 1 && msg[1] == 5 &&
+    if (instance->control_mode == 1 && instance->jog_touch && msg[1] == 0 &&
         (status == 0x80 || status == 0x90)) {
         instance->knob_touched = status == 0x90 && msg[2] != 0;
-        scratch_engine_jog(&instance->engine,
-                           instance->knob_touched ? 0.0 :
-                           (instance->virtual_play ? instance->virtual_speed : 0.0),
-                           0);
+        if (!instance->knob_touched)
+            instance->virtual_samples_remaining = 0;
+        scratch_engine_set_rate_smooth(&instance->engine,
+            instance->knob_touched ? 0.0 :
+            (instance->virtual_play ? instance->virtual_speed : 0.0),
+            (unsigned int)lrintf(instance->touch_inertia_ms * 44.1f));
+        return;
+    }
+
+    if (instance->control_mode == 2 && instance->jog_touch && msg[1] == 9 &&
+        (status == 0x80 || status == 0x90)) {
+        instance->knob_touched = status == 0x90 && msg[2] != 0;
+        if (!instance->knob_touched)
+            instance->virtual_samples_remaining = 0;
+        scratch_engine_set_rate_smooth(&instance->engine,
+            instance->knob_touched ? 0.0 :
+            (instance->virtual_play ? instance->virtual_speed : 0.0),
+            (unsigned int)lrintf(instance->touch_inertia_ms * 44.1f));
         return;
     }
 
@@ -517,7 +546,8 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
         static const char *const numeric_keys[] = {
             "control_mode", "mode", "fader_cc", "fader_channel", "hamster", "cut_in",
             "curve", "low_cut", "retrigger_ms", "wave_zoom",
-            "jog_sensitivity", "virtual_play", "virtual_speed"
+            "jog_sensitivity", "jog_touch", "knob_sensitivity", "knob_smoothing_ms", "virtual_play",
+            "virtual_speed", "touch_inertia_ms", "loop"
         };
         char path[PATH_MAX];
         size_t i;
@@ -567,10 +597,6 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
         instance->control_mode = mode < 0 ? 0 : (mode > 2 ? 2 : mode);
         instance->knob_touched = 0;
         instance->virtual_samples_remaining = 0;
-        if (instance->control_mode != 2) {
-            instance->jog_active = 0;
-            instance->jog_gate_open = 0;
-        }
         if (instance->control_mode == 0) {
             scratch_engine_jog(&instance->engine, 0.0, 0);
         } else {
@@ -579,34 +605,72 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
         }
     }
     else if (strcmp(key, "jog_active") == 0) {
-        instance->jog_active = instance->control_mode == 2 && atoi(value) != 0;
-        if (instance->jog_active && instance->control_mode == 2) {
+        instance->jog_active = atoi(value) != 0;
+        if (instance->jog_active) {
             instance->jog_gate_open = 0;
-            scratch_engine_jog(&instance->engine,
-                               instance->virtual_play ? instance->virtual_speed : 0.0,
-                               0);
+            if (instance->control_mode != 0)
+                scratch_engine_jog(&instance->engine,
+                                   instance->virtual_play ? instance->virtual_speed : 0.0,
+                                   0);
         } else {
-            scratch_engine_jog(&instance->engine, 0.0, 0);
+            scratch_engine_jog(&instance->engine,
+                               instance->control_mode != 0 && instance->virtual_play
+                                   ? instance->virtual_speed : 0.0,
+                               0);
         }
     }
     else if (strcmp(key, "jog_delta") == 0) {
         double delta = strtod(value, NULL);
-        if (instance->jog_active && instance->control_mode == 2)
+        if (instance->jog_active && instance->control_mode != 0)
             scratch_engine_jog(&instance->engine,
                                delta * instance->jog_sensitivity,
                                0);
-        if (instance->jog_active && instance->control_mode == 2)
+        if (instance->jog_active && instance->control_mode != 0)
             instance->virtual_samples_remaining = 5292; /* 120 ms release. */
+    }
+    else if (strcmp(key, "jog_rate") == 0) {
+        /* Knob motion crosses the UI's fire-and-forget mailbox, while the
+         * touch edge uses an acknowledged write. A final queued motion update
+         * can therefore arrive after release. Once Knob mode says the finger
+         * is up, discard that stale rate instead of restarting a 50 ms scratch
+         * timeout after the motor has already resumed. Jog mode has no touch
+         * gate and continues to accept every rate update. */
+        if (instance->jog_active && instance->control_mode != 0 &&
+            (instance->control_mode != 1 || !instance->jog_touch || instance->knob_touched)) {
+            scratch_engine_set_rate_smooth(&instance->engine,
+                strtod(value, NULL),
+                (unsigned int)lrintf(instance->knob_smoothing_ms * 44.1f));
+            instance->virtual_samples_remaining = 2205; /* 50 ms after last detent. */
+        }
+    }
+    else if (strcmp(key, "knob_touch") == 0) {
+        if (instance->jog_active &&
+            ((instance->control_mode == 1 && instance->jog_touch) ||
+             (instance->control_mode == 2 && instance->jog_touch))) {
+            instance->knob_touched = atoi(value) != 0;
+            if (!instance->knob_touched)
+                instance->virtual_samples_remaining = 0;
+            scratch_engine_set_rate_smooth(&instance->engine,
+                instance->knob_touched ? 0.0 :
+                (instance->virtual_play ? instance->virtual_speed : 0.0),
+                (unsigned int)lrintf(instance->touch_inertia_ms * 44.1f));
+        }
     }
     else if (strcmp(key, "jog_gate") == 0) {
         int command = atoi(value);
         instance->jog_gate_open = command != 0;
-        if (instance->control_mode == 2 && instance->jog_active && command > 1)
+        if (instance->jog_active && command > 1)
             scratch_engine_retrigger(&instance->engine,
                 (unsigned int)lrintf(instance->retrigger_ms * 44.1f));
     }
     else if (strcmp(key, "jog_sensitivity") == 0)
         instance->jog_sensitivity = fminf(2.0f, fmaxf(0.1f, strtof(value, NULL)));
+    else if (strcmp(key, "jog_touch") == 0)
+        instance->jog_touch = atoi(value) != 0;
+    else if (strcmp(key, "knob_sensitivity") == 0)
+        instance->knob_sensitivity = fminf(1.0f, fmaxf(0.02f, strtof(value, NULL)));
+    else if (strcmp(key, "knob_smoothing_ms") == 0)
+        instance->knob_smoothing_ms = fminf(120.0f, fmaxf(0.0f, strtof(value, NULL)));
     else if (strcmp(key, "virtual_play") == 0) {
         instance->virtual_play = atoi(value) != 0;
         if (instance->control_mode != 0 &&
@@ -620,6 +684,12 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
             instance->virtual_play && !instance->knob_touched &&
             instance->virtual_samples_remaining == 0)
             scratch_engine_set_rate(&instance->engine, instance->virtual_speed);
+    }
+    else if (strcmp(key, "touch_inertia_ms") == 0)
+        instance->touch_inertia_ms = fminf(250.0f, fmaxf(0.0f, strtof(value, NULL)));
+    else if (strcmp(key, "loop") == 0) {
+        instance->loop = atoi(value) != 0;
+        scratch_engine_set_loop(&instance->engine, instance->loop);
     }
     else if (strcmp(key, "platter") == 0) {
         float next = fminf(1.0f, fmaxf(0.0f, strtof(value, NULL)));
@@ -673,14 +743,22 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
               "\"options\":[\"1 sec\",\"4 sec\",\"16 sec\",\"Overview\"],\"default\":1},"
             "{\"key\":\"jog_sensitivity\",\"name\":\"Jog Feel\",\"type\":\"float\","
               "\"min\":0.1,\"max\":2,\"step\":0.05,\"default\":0.55},"
+            "{\"key\":\"jog_touch\",\"name\":\"Jog Touch\",\"type\":\"enum\","
+              "\"options\":[\"Off\",\"On\"],\"default\":0},"
+            "{\"key\":\"knob_sensitivity\",\"name\":\"Knob Feel\",\"type\":\"float\","
+              "\"min\":0.02,\"max\":1,\"step\":0.02,\"default\":0.18},"
+            "{\"key\":\"knob_smoothing_ms\",\"name\":\"Knob Smooth\",\"type\":\"float\","
+              "\"min\":0,\"max\":120,\"step\":5,\"unit\":\"ms\",\"default\":25},"
             "{\"key\":\"virtual_play\",\"name\":\"Motor\",\"type\":\"enum\","
               "\"options\":[\"Stop\",\"Play\"],\"default\":1},"
             "{\"key\":\"virtual_speed\",\"name\":\"Motor Speed\",\"type\":\"float\","
               "\"min\":0.1,\"max\":2,\"step\":0.05,\"unit\":\"x\",\"default\":1},"
+            "{\"key\":\"touch_inertia_ms\",\"name\":\"Deck Inertia\",\"type\":\"float\","
+              "\"min\":0,\"max\":250,\"step\":5,\"unit\":\"ms\",\"default\":45},"
+            "{\"key\":\"loop\",\"name\":\"Loop\",\"type\":\"enum\","
+              "\"options\":[\"Off\",\"On\"],\"default\":1},"
             "{\"key\":\"platter\",\"name\":\"Knob Scratch\",\"type\":\"float\","
               "\"min\":0,\"max\":1,\"step\":0.01,\"default\":0.5},"
-            "{\"key\":\"jog_scratch\",\"name\":\"Jog Scratch\",\"type\":\"canvas\","
-              "\"canvas_script\":\"jog_scratch.js\",\"show_value\":false,\"show_footer\":false},"
             "{\"key\":\"dvs_status\",\"name\":\"DVS Status\",\"type\":\"string\","
               "\"access\":\"read\",\"live\":true},"
             "{\"key\":\"monitor\",\"name\":\"DVS Monitor\",\"type\":\"canvas\","
@@ -689,17 +767,17 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
             "{\"key\":\"scratch_view_status\",\"name\":\"Scratch View Status\","
               "\"type\":\"string\",\"access\":\"read\",\"live\":true},"
             "{\"key\":\"scratch_view\",\"name\":\"Scratch View\",\"type\":\"canvas\","
-              "\"canvas_script\":\"scratch_view.js\",\"as_page\":true,\"show_value\":false,"
+              "\"canvas_script\":\"scratch_view.js\",\"show_value\":false,\"show_footer\":false,\"fullscreen_live_ms\":100,"
               "\"extra_keys\":[\"scratch_view_status\"]}"
             "]";
         value = snprintf(out, out_len, "%s", contract);
     } else if (strcmp(key, "ui_hierarchy") == 0) {
         static const char hierarchy[] =
             "{\"levels\":{\"root\":{\"label\":\"Scratch\","
-            "\"params\":[\"sample_file\",\"control_mode\",\"mode\",\"fader_cc\",\"fader_channel\","
-                         "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\",\"low_cut\",\"retrigger_ms\",\"wave_zoom\",\"jog_sensitivity\",\"platter\",\"jog_scratch\",\"virtual_play\",\"virtual_speed\",\"scratch_view\",\"monitor\"],"
-            "\"knobs\":[\"sample_file\",\"control_mode\",\"mode\",\"fader_cc\",\"fader_channel\","
-                        "\"midi_learn\",\"hamster\",\"cut_in\",\"curve\",\"low_cut\",\"retrigger_ms\",\"wave_zoom\",\"jog_sensitivity\",\"platter\",\"jog_scratch\",\"virtual_play\",\"virtual_speed\"]}}}";
+            "\"params\":[\"sample_file\",\"control_mode\",\"scratch_view\",\"hamster\","
+                         "\"loop\",\"low_cut\",\"cut_in\",\"retrigger_ms\",\"monitor\"],"
+            "\"knobs\":[\"sample_file\",\"control_mode\",\"scratch_view\",\"hamster\","
+                        "\"loop\",\"low_cut\",\"cut_in\",\"retrigger_ms\"]}}}";
         value = snprintf(out, out_len, "%s", hierarchy);
     } else if (strcmp(key, "control_mode") == 0)
         value = snprintf(out, out_len, "%d", instance->control_mode);
@@ -721,10 +799,20 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
         value = snprintf(out, out_len, "%d", instance->wave_zoom);
     else if (strcmp(key, "jog_sensitivity") == 0)
         value = snprintf(out, out_len, "%.2f", instance->jog_sensitivity);
+    else if (strcmp(key, "jog_touch") == 0)
+        value = snprintf(out, out_len, "%d", instance->jog_touch);
+    else if (strcmp(key, "knob_sensitivity") == 0)
+        value = snprintf(out, out_len, "%.2f", instance->knob_sensitivity);
+    else if (strcmp(key, "knob_smoothing_ms") == 0)
+        value = snprintf(out, out_len, "%.1f", instance->knob_smoothing_ms);
     else if (strcmp(key, "virtual_play") == 0)
         value = snprintf(out, out_len, "%d", instance->virtual_play);
     else if (strcmp(key, "virtual_speed") == 0)
         value = snprintf(out, out_len, "%.2f", instance->virtual_speed);
+    else if (strcmp(key, "touch_inertia_ms") == 0)
+        value = snprintf(out, out_len, "%.1f", instance->touch_inertia_ms);
+    else if (strcmp(key, "loop") == 0)
+        value = snprintf(out, out_len, "%d", instance->loop);
     else if (strcmp(key, "platter") == 0)
         value = snprintf(out, out_len, "%.2f", instance->platter_value);
     else if (strcmp(key, "jog_scratch") == 0)
@@ -743,13 +831,15 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
             "{\"version\":1,\"sample_file\":\"%s\",\"control_mode\":%d,\"mode\":%d,"
             "\"fader_cc\":%d,\"fader_channel\":%d,\"hamster\":%d,"
             "\"cut_in\":%.4f,\"curve\":%.4f,\"low_cut\":%.1f,"
-            "\"retrigger_ms\":%.1f,\"wave_zoom\":%d,\"jog_sensitivity\":%.3f,"
-            "\"virtual_play\":%d,\"virtual_speed\":%.3f}",
+            "\"retrigger_ms\":%.1f,\"wave_zoom\":%d,\"jog_sensitivity\":%.3f,\"jog_touch\":%d,"
+            "\"knob_sensitivity\":%.3f,\"knob_smoothing_ms\":%.1f,\"virtual_play\":%d,\"virtual_speed\":%.3f,"
+            "\"touch_inertia_ms\":%.1f,\"loop\":%d}",
             escaped_path, instance->control_mode, instance->absolute_mode, instance->fader_cc,
             instance->fader_channel, instance->hamster, instance->cut_in,
             instance->curve, instance->low_cut_hz, instance->retrigger_ms,
-            instance->wave_zoom, instance->jog_sensitivity,
-            instance->virtual_play, instance->virtual_speed);
+            instance->wave_zoom, instance->jog_sensitivity, instance->jog_touch, instance->knob_sensitivity,
+            instance->knob_smoothing_ms, instance->virtual_play, instance->virtual_speed,
+            instance->touch_inertia_ms, instance->loop);
     }
     else if (strcmp(key, "monitor") == 0 || strcmp(key, "scratch_view") == 0)
         value = snprintf(out, out_len, "%s", "");
@@ -796,7 +886,9 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
             playhead = centre * 127.0 / (double)(instance->engine.sample_frames - 1);
         envelope[128] = '\0';
         value = snprintf(out, out_len, "%.3f,%.4f,%d,%d,%.2f,%s",
-                         centre / 44100.0, instance->decoded_pitch,
+                         centre / 44100.0,
+                         instance->decoded_pitch * (instance->control_mode == 0
+                             ? instance->virtual_speed : 1.0f),
                          instance->decoded_locked, instance->wave_zoom,
                          playhead, envelope);
     }
@@ -926,7 +1018,7 @@ static void scratch_render(void *opaque, int16_t *out_lr, int frames)
     instance->decoded_word = instance->decoder.bitstream;
     if (instance->control_mode == 0)
         scratch_engine_follow_timecode(
-            &instance->engine, pitch,
+            &instance->engine, pitch * instance->virtual_speed,
             instance->decoded_position_seconds,
             position >= 0, instance->absolute_mode != 0);
     if (atomic_load_explicit(&instance->loader_state, memory_order_acquire) == 1)
@@ -957,9 +1049,11 @@ static void scratch_render(void *opaque, int16_t *out_lr, int frames)
         instance->virtual_samples_remaining -= (unsigned int)frames;
     } else if (instance->virtual_samples_remaining > 0) {
         instance->virtual_samples_remaining = 0;
-        if (instance->control_mode != 0 && !instance->knob_touched)
-            scratch_engine_set_rate(&instance->engine,
-                                    instance->virtual_play ? instance->virtual_speed : 0.0);
+        if (instance->control_mode != 0)
+            scratch_engine_set_rate_smooth(&instance->engine,
+                instance->knob_touched ? 0.0 :
+                (instance->virtual_play ? instance->virtual_speed : 0.0),
+                (unsigned int)lrintf(instance->touch_inertia_ms * 44.1f));
     }
 }
 

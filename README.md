@@ -1,41 +1,66 @@
 # Schwung Scratch
 
-Experimental digital-vinyl sound generator for Ableton Move and Schwung.
+Digital vinyl and hands-on sample scratching for Ableton Move and Schwung.
+Scratch decodes Serato 2nd Edition side A control vinyl from Move's stereo line
+input. It can also use Move's first encoder or jog wheel when no turntable is
+available. Pads act as momentary crossfader cuts.
 
-The module decodes Serato 2nd Edition side A control vinyl from Move's stereo
-line input and uses the decoded direction, speed, and optional absolute
-position to play a digital sample. A class-compliant USB MIDI fader can control
-the output cut.
+## Requirements
 
-## Current MVP
+- Ableton Move with a Schwung build containing `touch_observe` and fullscreen
+  canvas live values. Schwung 1.4.0 alone is not sufficient.
+- A 44.1 kHz, 16-bit, stereo PCM WAV sample.
+- For DVS: Serato 2nd Edition side A control vinyl and a stereo line-level
+  turntable output connected to Move's 3.5 mm input.
 
-Choose **Sample** in the module parameter page to open Schwung's built-in
-sample browser. The current decoder accepts 44.1 kHz, 16-bit, stereo PCM WAV
-files. The selected absolute path is stored with the chain state and reloaded
-by a background worker. New instances start with the bundled **Ahh Fresh**
-sample, created and contributed by Matt Estela; choosing another sample or
-restoring a saved chain overrides it.
+Convert an MP3 with:
 
-Connect stereo line-level timecode audio to Move's 3.5 mm input and the MIDI
-device to Move's USB-A host port. The default fader mapping is CC 1 on any MIDI
-channel; channel 16 in the module UI means omni. For the Headache Sound OMNI,
-set **Learn CC** to **Armed**, then sweep the selected main crossfader once. The
-first incoming CC is stored with its MIDI channel. Use the OMNI's FADER switch
-to choose the physical left or right fader, and use either the OMNI REV switch
-or the module's Hamster option—not both.
+```sh
+ffmpeg -i input.mp3 -ar 44100 -ac 2 -c:a pcm_s16le output.wav
+```
 
-Without a turntable, **Knob Scratch** provides a simple bounded test control.
-For a more playable version, select **Jog Scratch** and press the jog wheel to
-open its full-screen mode. Turning the jog wheel then moves the sample instead
-of navigating the UI; pads remain momentary cut switches. Press the jog wheel
-or Back to leave the mode, and adjust **Jog Feel** to change its response. The
-virtual platter resumes forward playback after release; **Motor** starts or
-stops that playback and **Motor Speed** sets its forward rate.
+## Main page
 
-Run host tests with `./tests/run.sh`. Build the ARM64 module with
-`./scripts/build.sh`.
+| Knob | Control |
+|---|---|
+| 1 | Sample browser |
+| 2 | DVS, Knob, or Jog control |
+| 3 | Open Scratch View |
+| 4 | Hamster mode |
+| 5 | Loop |
+| 6 | Low-cut filter |
+| 7 | Fader cut-in threshold |
+| 8 | Pad retrigger gap |
+
+The second page is DVS Monitor, showing input level, decoder lock, direction,
+speed, signal quality, and the timecode scope.
+
+## Scratch View
+
+Knob and Jog modes expose Feel, Smooth, Inertia, Touch, playback Speed, waveform
+Zoom, and Motor Play/Stop. In Knob mode, touching Knob 1 stops the virtual
+record, turning scratches it, and releasing resumes the motor. Jog mode uses the
+jog wheel. Touch behavior can be disabled.
+
+DVS mode follows the decoded vinyl position and speed. Knob 6 scales playback
+speed and Knob 7 changes waveform zoom. Press any pad to open the cut; overlapping
+pad presses retrigger it for crab and transformer techniques. Press the jog wheel
+or Back to leave Scratch View.
+
+Sample selection and all controls persist with the chain. New instances use the
+bundled `ahh-fresh.wav`, created by Matt Estela.
+
+## Build and test
+
+```sh
+./tests/run.sh
+./scripts/build.sh
+```
+
+The release archive is written to `dist/scratch-module.tar.gz`.
 
 ## License
 
 GPL-3.0-or-later. The timecode decoder is derived from xwax by Mark Hills and
-retains its upstream copyright notices.
+retains its upstream notices. See `THIRD_PARTY_LICENSES.md` and
+`SAMPLE_LICENSE.md`.

@@ -136,6 +136,31 @@ static void test_jog_stops_after_hold(void)
     assert(fabs(engine.position_frames - 80.0) < 0.0001);
 }
 
+static void test_loop_wraps_both_directions(void)
+{
+    int16_t sample[16] = {0};
+    int16_t out[4] = {0};
+    scratch_engine_t engine;
+
+    scratch_engine_init(&engine, 8, 8);
+    scratch_engine_set_sample(&engine, sample, 8);
+    scratch_engine_set_position(&engine, 7.0);
+    scratch_engine_set_rate(&engine, 1.0);
+    scratch_engine_render(&engine, out, 2);
+    assert(fabs(engine.position_frames - 1.0) < 0.0001);
+
+    scratch_engine_set_position(&engine, 0.0);
+    scratch_engine_set_rate(&engine, -1.0);
+    scratch_engine_render(&engine, out, 1);
+    assert(fabs(engine.position_frames - 7.0) < 0.0001);
+
+    scratch_engine_set_loop(&engine, 0);
+    scratch_engine_set_position(&engine, 7.0);
+    scratch_engine_set_rate(&engine, 1.0);
+    scratch_engine_render(&engine, out, 2);
+    assert(fabs(engine.position_frames - 7.0) < 0.0001);
+}
+
 int main(void)
 {
     test_forward_and_reverse();
@@ -145,6 +170,7 @@ int main(void)
     test_pad_retrigger_cut();
     test_low_cut_removes_dc();
     test_jog_stops_after_hold();
+    test_loop_wraps_both_directions();
     puts("scratch_engine: all tests passed");
     return 0;
 }
