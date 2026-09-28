@@ -136,6 +136,24 @@ static void test_jog_stops_after_hold(void)
     assert(fabs(engine.position_frames - 80.0) < 0.0001);
 }
 
+static void test_motor_stop_uses_inertia_ramp(void)
+{
+    int16_t sample[4] = {0};
+    int16_t out[440] = {0};
+    scratch_engine_t engine;
+
+    scratch_engine_init(&engine, 44100, 44100);
+    scratch_engine_set_sample(&engine, sample, 2);
+    scratch_engine_set_rate(&engine, 1.0f);
+    scratch_engine_set_rate_smooth(&engine, 0.0f, 441);
+    scratch_engine_render(&engine, out, 220);
+    assert(engine.rate > 0.45f && engine.rate < 0.55f);
+    scratch_engine_render(&engine, out, 220);
+    assert(engine.rate > 0.0f);
+    scratch_engine_render(&engine, out, 1);
+    assert(fabs(engine.rate) < 0.0001f);
+}
+
 static void test_loop_wraps_both_directions(void)
 {
     int16_t sample[16] = {0};
@@ -170,6 +188,7 @@ int main(void)
     test_pad_retrigger_cut();
     test_low_cut_removes_dc();
     test_jog_stops_after_hold();
+    test_motor_stop_uses_inertia_ramp();
     test_loop_wraps_both_directions();
     puts("scratch_engine: all tests passed");
     return 0;

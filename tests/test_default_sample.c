@@ -12,6 +12,7 @@ int main(int argc, char **argv)
     plugin_api_v2_t *api;
     void *instance;
     char status[16] = {0};
+    char value[4096] = {0};
     int attempts;
 
     assert(argc == 2);
@@ -19,6 +20,15 @@ int main(int argc, char **argv)
     assert(api != NULL);
     instance = api->create_instance(argv[1], NULL);
     assert(instance != NULL);
+    assert(api->get_param(instance, "control_mode", value,
+                          (int)sizeof(value)) >= 0);
+    assert(strcmp(value, "2") == 0);
+    assert(api->get_param(instance, "low_cut", value,
+                          (int)sizeof(value)) >= 0);
+    assert(strcmp(value, "180.0") == 0);
+    assert(api->get_param(instance, "scratch_view_status", value,
+                          (int)sizeof(value)) >= 0);
+    assert(strstr(value, ",1.0000,") != NULL);
 
     for (attempts = 0; attempts < 250; ++attempts) {
         assert(api->get_param(instance, "load_status", status,

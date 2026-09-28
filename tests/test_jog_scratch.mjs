@@ -107,6 +107,13 @@ assert.deepEqual(writes.slice(tuneStart), [
     ["knob_smoothing_ms", "30"],
     ["touch_inertia_ms", "40"],
 ]);
+const syncedEnvelope = "a".repeat(128);
+overlay.onValues(ctx, { values: {
+    scratch_view_status: `8.250,0.625,1,1,64,${syncedEnvelope}`,
+} });
+assert.equal(ctx.state.position, 8.25);
+assert.equal(ctx.state.speed, 0.625);
+assert.equal(ctx.state.envelope, syncedEnvelope);
 
 controlMode = 0;
 ctx.state = {};

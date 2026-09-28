@@ -261,7 +261,7 @@ globalThis.canvas_overlay = {
     },
 
     onValues(ctx, { values }) {
-        if (ctx.state.controlMode !== 0 || !values || !values.scratch_view_status) return;
+        if (!values || !values.scratch_view_status) return;
         const view = parseView(values.scratch_view_status);
         ctx.state.position = view.position;
         ctx.state.speed = view.pitch;

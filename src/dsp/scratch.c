@@ -423,10 +423,11 @@ static void *scratch_create(const char *module_dir, const char *json_defaults)
     instance->fader_channel = 16;
     instance->cut_in = 0.03f;
     instance->curve = 1.0f;
-    instance->low_cut_hz = 100.0f;
+    instance->low_cut_hz = 180.0f;
     instance->retrigger_ms = 8.7f;
     instance->wave_zoom = 1;
     instance->jog_sensitivity = 0.55f;
+    instance->control_mode = 2;
     instance->knob_sensitivity = 0.18f;
     instance->virtual_play = 1;
     instance->virtual_speed = 1.0f;
@@ -441,6 +442,7 @@ static void *scratch_create(const char *module_dir, const char *json_defaults)
                  "%s/samples/ahh-fresh.wav", module_dir);
     scratch_engine_set_low_cut(&instance->engine, instance->low_cut_hz);
     scratch_engine_set_loop(&instance->engine, instance->loop);
+    scratch_engine_set_rate(&instance->engine, instance->virtual_speed);
     apply_gate(instance);
 
     if (pthread_create(&instance->loader_thread, NULL, loader_main, instance) != 0) {
@@ -680,8 +682,9 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
         instance->virtual_play = atoi(value) != 0;
         if (instance->control_mode != 0 &&
             !instance->knob_touched && instance->virtual_samples_remaining == 0)
-            scratch_engine_set_rate(&instance->engine,
-                                    instance->virtual_play ? instance->virtual_speed : 0.0);
+            scratch_engine_set_rate_smooth(&instance->engine,
+                instance->virtual_play ? instance->virtual_speed : 0.0,
+                (unsigned int)lrintf(instance->touch_inertia_ms * 44.1f));
     }
     else if (strcmp(key, "virtual_speed") == 0) {
         instance->virtual_speed = fminf(2.0f, fmaxf(0.1f, strtof(value, NULL)));
@@ -725,7 +728,7 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
               "\"start_path\":\"/data/UserData/UserLibrary/Samples\","
               "\"filter\":\".wav\",\"default\":\"\"},"
             "{\"key\":\"control_mode\",\"name\":\"Control\",\"type\":\"enum\","
-              "\"options\":[\"DVS\",\"Knob\",\"Jog\"],\"default\":0},"
+              "\"options\":[\"DVS\",\"Knob\",\"Jog\"],\"default\":2},"
             "{\"key\":\"mode\",\"name\":\"Tracking\",\"type\":\"enum\","
               "\"options\":[\"Relative\",\"Absolute\"],\"default\":0},"
             "{\"key\":\"fader_cc\",\"name\":\"Fader CC\",\"type\":\"int\","
@@ -741,7 +744,7 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
             "{\"key\":\"curve\",\"name\":\"Curve\",\"type\":\"float\","
               "\"min\":0.1,\"max\":4,\"step\":0.1,\"default\":1},"
             "{\"key\":\"low_cut\",\"name\":\"Low Cut\",\"type\":\"float\","
-              "\"min\":0,\"max\":300,\"step\":5,\"unit\":\"Hz\",\"default\":100},"
+              "\"min\":0,\"max\":300,\"step\":5,\"unit\":\"Hz\",\"default\":180},"
             "{\"key\":\"retrigger_ms\",\"name\":\"Retrigger\",\"type\":\"float\","
               "\"min\":0,\"max\":30,\"step\":0.5,\"unit\":\"ms\",\"default\":8.7},"
             "{\"key\":\"wave_zoom\",\"name\":\"Wave Zoom\",\"type\":\"enum\","
@@ -892,8 +895,9 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
         envelope[128] = '\0';
         value = snprintf(out, out_len, "%.3f,%.4f,%d,%d,%.2f,%s",
                          centre / 44100.0,
-                         instance->decoded_pitch * (instance->control_mode == 0
-                             ? instance->virtual_speed : 1.0f),
+                         instance->control_mode == 0
+                             ? instance->decoded_pitch * instance->virtual_speed
+                             : instance->engine.rate,
                          instance->decoded_locked, instance->wave_zoom,
                          playhead, envelope);
     }
