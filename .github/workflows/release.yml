@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify version match
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          MODULE_VERSION=$(grep '"version"' src/module.json | head -1 | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+          if [ "$TAG_VERSION" != "$MODULE_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match module version ($MODULE_VERSION)"
+            exit 1
+          fi
+
+      - name: Test module
+        run: ./tests/run.sh
+
+      - name: Build ARM64 module
+        run: |
+          docker build -t schwung-scratch-builder -f scripts/Dockerfile .
+          docker run --rm -v "$PWD:/build" -w /build schwung-scratch-builder ./scripts/build.sh
+
+      - name: Verify release archive
+        run: |
+          test -f dist/scratch-module.tar.gz
+          tar -tzf dist/scratch-module.tar.gz | grep -qx 'scratch/module.json'
+          tar -xOf dist/scratch-module.tar.gz scratch/module.json | grep -q '"version": "1.0.0"'
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/scratch-module.tar.gz

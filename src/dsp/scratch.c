@@ -473,7 +473,8 @@ static void scratch_on_midi(void *opaque, const uint8_t *msg, int len, int sourc
     /* Knob Scratch is the first physical encoder on Main 2, whose capacitive
      * touch is note 0. Touch holds the virtual record; release restarts its
      * motor. Do this before the pad path so knob touches never open the gate. */
-    if (instance->control_mode == 1 && instance->jog_touch && msg[1] == 0 &&
+    if (source == MOVE_MIDI_SOURCE_TOUCH &&
+        instance->control_mode == 1 && instance->jog_touch && msg[1] == 0 &&
         (status == 0x80 || status == 0x90)) {
         instance->knob_touched = status == 0x90 && msg[2] != 0;
         if (!instance->knob_touched)
@@ -485,7 +486,8 @@ static void scratch_on_midi(void *opaque, const uint8_t *msg, int len, int sourc
         return;
     }
 
-    if (instance->control_mode == 2 && instance->jog_touch && msg[1] == 9 &&
+    if (source == MOVE_MIDI_SOURCE_TOUCH &&
+        instance->control_mode == 2 && instance->jog_touch && msg[1] == 9 &&
         (status == 0x80 || status == 0x90)) {
         instance->knob_touched = status == 0x90 && msg[2] != 0;
         if (!instance->knob_touched)

@@ -7,8 +7,7 @@ available. Pads act as momentary crossfader cuts.
 
 ## Requirements
 
-- Ableton Move with a Schwung build containing `touch_observe` and fullscreen
-  canvas live values. Schwung 1.4.0 alone is not sufficient.
+- Ableton Move running Schwung 1.5.0 or later.
 - A 44.1 kHz, 16-bit, stereo PCM WAV sample.
 - For DVS: Serato 2nd Edition side A control vinyl and a stereo line-level
   turntable output connected to Move's 3.5 mm input.
