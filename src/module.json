@@ -2,7 +2,7 @@
   "id": "scratch",
   "name": "Scratch",
   "abbrev": "SCR",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "mestela",
   "description": "Scratch a digital sample with Serato control vinyl and a USB MIDI fader",
   "dsp": "dsp.so",

@@ -1,0 +1,36 @@
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "plugin_api_v1.h"
+
+extern plugin_api_v2_t *move_plugin_init_v2(const host_api_v1_t *host);
+
+int main(int argc, char **argv)
+{
+    plugin_api_v2_t *api;
+    void *instance;
+    char status[16] = {0};
+    int attempts;
+
+    assert(argc == 2);
+    api = move_plugin_init_v2(NULL);
+    assert(api != NULL);
+    instance = api->create_instance(argv[1], NULL);
+    assert(instance != NULL);
+
+    for (attempts = 0; attempts < 250; ++attempts) {
+        assert(api->get_param(instance, "load_status", status,
+                              (int)sizeof(status)) >= 0);
+        if (strcmp(status, "1") == 0)
+            break;
+        assert(strcmp(status, "-1") != 0);
+        usleep(20000);
+    }
+
+    assert(strcmp(status, "1") == 0);
+    api->destroy_instance(instance);
+    puts("default sample: loaded bundled WAV");
+    return 0;
+}

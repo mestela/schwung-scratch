@@ -294,7 +294,10 @@ static void *loader_main(void *opaque)
 {
     scratch_instance_t *instance = opaque;
     struct timecode_def *definition;
-    unsigned int handled_sequence = 0;
+    /* UINT_MAX guarantees that the initial requested_path is handled even
+     * before set_param has advanced path_sequence. Without this, both values
+     * start at zero and the bundled default sample is skipped forever. */
+    unsigned int handled_sequence = UINT_MAX;
     int16_t *current_sample = NULL;
     unsigned char *current_waveform = NULL;
     unsigned char *current_overview = NULL;

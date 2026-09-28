@@ -36,7 +36,9 @@ jobs:
         run: |
           test -f dist/scratch-module.tar.gz
           tar -tzf dist/scratch-module.tar.gz | grep -qx 'scratch/module.json'
-          tar -xOf dist/scratch-module.tar.gz scratch/module.json | grep -q '"version": "1.0.0"'
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          ARCHIVE_VERSION=$(tar -xOf dist/scratch-module.tar.gz scratch/module.json | grep '"version"' | head -1 | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+          test "$TAG_VERSION" = "$ARCHIVE_VERSION"
 
       - uses: softprops/action-gh-release@v2
         with:

@@ -2,3 +2,4 @@
 /dist/
 /tests/test_scratch_engine
 /tests/test_timecode
+/tests/test_default_sample
