@@ -39,7 +39,7 @@ speed, signal quality, and the timecode scope.
 Knob and Jog modes expose Feel, Smooth, Inertia, Touch, playback Speed, waveform
 Zoom, and Motor Play/Stop. In Knob mode, touching Knob 1 stops the virtual
 record, turning scratches it, and releasing resumes the motor. Jog mode uses the
-jog wheel. Touch behavior can be disabled.
+jog wheel. Touch behavior can be disabled, currently detecting a touch is instantaneous, but detecting a release lags enough to annoying.
 
 DVS mode follows the decoded vinyl position and speed. Knob 6 scales playback
 speed and Knob 7 changes waveform zoom. Press any pad to open the cut; overlapping
@@ -47,7 +47,7 @@ pad presses retrigger it for crab and transformer techniques. Press the jog whee
 or Back to leave Scratch View.
 
 Sample selection and all controls persist with the chain. New instances use the
-bundled `ahh-fresh.wav`, created by Matt Estela.
+bundled `ahh-fresh.wav`.
 
 ## Build and test
 
