@@ -30,3 +30,15 @@ cc -std=gnu11 -Wall -Wextra -Werror \
 node "$repo_root/tests/test_monitor.mjs"
 node "$repo_root/tests/test_scratch_view.mjs"
 node "$repo_root/tests/test_jog_scratch.mjs"
+
+multi_test=$(mktemp "${TMPDIR:-/tmp}/scratch-multi.XXXXXX")
+trap 'rm -f "$multi_test"' EXIT
+cc -std=gnu11 -Wall -Wextra -Werror \
+    -I"$repo_root/src/dsp" -I"$repo_root/src/dsp/vendor/xwax" \
+    "$repo_root/tests/test_multi_instance.c" \
+    "$repo_root/src/dsp/scratch.c" \
+    "$repo_root/src/dsp/scratch_engine.c" \
+    "$repo_root/src/dsp/vendor/xwax/timecoder.c" \
+    "$repo_root/src/dsp/vendor/xwax/lut.c" \
+    -lm -lpthread -o "$multi_test"
+"$multi_test" "$repo_root"

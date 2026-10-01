@@ -25,11 +25,16 @@ ffmpeg -i input.mp3 -ar 44100 -ac 2 -c:a pcm_s16le output.wav
 | 1 | Sample browser |
 | 2 | DVS, Knob, or Jog control |
 | 3 | Open Scratch View |
-| 4 | Hamster mode |
-| 5 | Loop |
-| 6 | Low-cut filter |
-| 7 | Fader cut-in threshold |
-| 8 | Pad retrigger gap |
+| 4 | Crossfader (Schwung 1.6 CC-learn target) |
+| 5 | Hamster mode |
+| 6 | Loop |
+| 7 | Low-cut filter |
+| 8 | Fader cut-in threshold |
+
+On Schwung 1.6, start CC Learn, move the Crossfader parameter, then move the
+hardware fader connected through Move's USB-A port. The older direct CC,
+channel, and module-local Learn parameters remain available for compatibility
+with Schwung 1.5 setups.
 
 The second page is DVS Monitor, showing input level, decoder lock, direction,
 speed, signal quality, and the timecode scope.

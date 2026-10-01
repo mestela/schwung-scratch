@@ -26,6 +26,17 @@ int main(int argc, char **argv)
     assert(api->get_param(instance, "low_cut", value,
                           (int)sizeof(value)) >= 0);
     assert(strcmp(value, "180.0") == 0);
+    assert(api->get_param(instance, "fader", value,
+                          (int)sizeof(value)) >= 0);
+    assert(strcmp(value, "1.000") == 0);
+    api->set_param(instance, "fader", "0.25");
+    assert(api->get_param(instance, "fader", value,
+                          (int)sizeof(value)) >= 0);
+    assert(strcmp(value, "0.250") == 0);
+    api->set_param(instance, "fader", "2");
+    assert(api->get_param(instance, "fader", value,
+                          (int)sizeof(value)) >= 0);
+    assert(strcmp(value, "1.000") == 0);
     assert(api->get_param(instance, "scratch_view_status", value,
                           (int)sizeof(value)) >= 0);
     assert(strstr(value, ",1.0000,") != NULL);

@@ -15,6 +15,20 @@
 #include <string.h>
 #include <unistd.h>
 
+/* xwax caches lookup tables in process-global definitions. Slot loader threads
+ * must never build the same table concurrently. Keep it for the module's
+ * lifetime: destroying a slot only clears its own decoder, not this table.
+ * All waiting happens on loader threads, never on the audio callback. */
+static pthread_once_t timecode_once = PTHREAD_ONCE_INIT;
+static struct timecode_def *shared_timecode_definition;
+
+static void initialize_timecode_definition(void)
+{
+    shared_timecode_definition = timecoder_find_definition("serato_2a");
+    if (!shared_timecode_definition)
+        fprintf(stderr, "Scratch: timecode initialization failed; DVS unavailable\n");
+}
+
 typedef struct wav_header {
     char riff[4];
     uint32_t riff_size;
@@ -303,7 +317,8 @@ static void *loader_main(void *opaque)
     unsigned char *current_overview = NULL;
 
     demote_loader_thread();
-    definition = timecoder_find_definition("serato_2a");
+    pthread_once(&timecode_once, initialize_timecode_definition);
+    definition = shared_timecode_definition;
     if (definition) {
         timecoder_init(&instance->decoder, definition, 1.0, 44100, false);
         atomic_store_explicit(&instance->decoder_ready, 1, memory_order_release);
@@ -571,6 +586,11 @@ static void scratch_set_param(void *opaque, const char *key, const char *value)
     }
     if (strcmp(key, "mode") == 0)
         instance->absolute_mode = atoi(value) != 0;
+    else if (strcmp(key, "fader") == 0) {
+        instance->fader_raw = fminf(1.0f, fmaxf(0.0f, strtof(value, NULL)));
+        /* A host-mapped CC takes ownership from the moment it writes. */
+        instance->pad_gate_active = 0;
+    }
     else if (strcmp(key, "fader_cc") == 0)
         instance->fader_cc = atoi(value);
     else if (strcmp(key, "fader_channel") == 0)
@@ -731,6 +751,8 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
               "\"options\":[\"DVS\",\"Knob\",\"Jog\"],\"default\":2},"
             "{\"key\":\"mode\",\"name\":\"Tracking\",\"type\":\"enum\","
               "\"options\":[\"Relative\",\"Absolute\"],\"default\":0},"
+            "{\"key\":\"fader\",\"name\":\"Crossfader\",\"type\":\"float\","
+              "\"min\":0,\"max\":1,\"step\":0.01,\"default\":1,\"live\":true},"
             "{\"key\":\"fader_cc\",\"name\":\"Fader CC\",\"type\":\"int\","
               "\"min\":0,\"max\":127,\"step\":1,\"default\":1},"
             "{\"key\":\"fader_channel\",\"name\":\"MIDI Ch\",\"type\":\"int\","
@@ -782,15 +804,17 @@ static int scratch_get_param(void *opaque, const char *key, char *out, int out_l
     } else if (strcmp(key, "ui_hierarchy") == 0) {
         static const char hierarchy[] =
             "{\"levels\":{\"root\":{\"label\":\"Scratch\","
-            "\"params\":[\"sample_file\",\"control_mode\",\"scratch_view\",\"hamster\","
+            "\"params\":[\"sample_file\",\"control_mode\",\"scratch_view\",\"fader\",\"hamster\","
                          "\"loop\",\"low_cut\",\"cut_in\",\"retrigger_ms\",\"monitor\"],"
-            "\"knobs\":[\"sample_file\",\"control_mode\",\"scratch_view\",\"hamster\","
-                        "\"loop\",\"low_cut\",\"cut_in\",\"retrigger_ms\"]}}}";
+            "\"knobs\":[\"sample_file\",\"control_mode\",\"scratch_view\",\"fader\","
+                        "\"hamster\",\"loop\",\"low_cut\",\"cut_in\"]}}}";
         value = snprintf(out, out_len, "%s", hierarchy);
     } else if (strcmp(key, "control_mode") == 0)
         value = snprintf(out, out_len, "%d", instance->control_mode);
     else if (strcmp(key, "mode") == 0)
         value = snprintf(out, out_len, "%d", instance->absolute_mode);
+    else if (strcmp(key, "fader") == 0)
+        value = snprintf(out, out_len, "%.3f", instance->fader_raw);
     else if (strcmp(key, "fader_cc") == 0)
         value = snprintf(out, out_len, "%d", instance->fader_cc);
     else if (strcmp(key, "fader_channel") == 0)

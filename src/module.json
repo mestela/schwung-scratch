@@ -2,7 +2,7 @@
   "id": "scratch",
   "name": "Scratch",
   "abbrev": "SCR",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": "mestela",
   "description": "Scratch a digital sample with Serato control vinyl and a USB MIDI fader",
   "dsp": "dsp.so",
@@ -21,6 +21,7 @@
       {"key":"sample_file", "name":"Sample", "type":"filepath", "root":"/data/UserData/UserLibrary/Samples", "start_path":"/data/UserData/UserLibrary/Samples", "filter":".wav", "default":""},
       {"key":"control_mode", "name":"Control", "type":"enum", "options":["DVS","Knob","Jog"], "default":2},
       {"key":"mode", "name":"Tracking", "type":"enum", "options":["Relative","Absolute"], "default":0},
+      {"key":"fader", "name":"Crossfader", "type":"float", "min":0, "max":1, "step":0.01, "default":1, "live":true},
       {"key":"fader_cc", "name":"Fader CC", "type":"int", "min":0, "max":127, "step":1, "default":1},
       {"key":"fader_channel", "name":"MIDI Ch", "type":"int", "min":0, "max":16, "step":1, "default":16},
       {"key":"midi_learn", "name":"Learn CC", "type":"enum", "options":["Off","Armed"], "default":0},
@@ -48,8 +49,8 @@
       "levels": {
         "root": {
           "label": "Scratch",
-          "params": ["sample_file", "control_mode", "scratch_view", "hamster", "loop", "low_cut", "cut_in", "retrigger_ms", "monitor"],
-          "knobs": ["sample_file", "control_mode", "scratch_view", "hamster", "loop", "low_cut", "cut_in", "retrigger_ms"]
+          "params": ["sample_file", "control_mode", "scratch_view", "fader", "hamster", "loop", "low_cut", "cut_in", "retrigger_ms", "monitor"],
+          "knobs": ["sample_file", "control_mode", "scratch_view", "fader", "hamster", "loop", "low_cut", "cut_in"]
         }
       }
     }
